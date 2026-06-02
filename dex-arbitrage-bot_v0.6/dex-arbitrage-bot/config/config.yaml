@@ -1,0 +1,36 @@
+# DEX間アービトラージBot config.yaml
+# すべてのパラメータをここで管理（要件定義準拠）
+
+bot:
+  chain: "arbitrum"                    # 運用チェーン（arbitrum, base, solanaなどに変更可能）
+  monitoring_interval: 2.0             # 価格監視間隔（秒）
+
+trading:
+  price_difference_threshold: 0.5      # 価格差閾値 (%). これ以上で機会検知
+  min_profit_usd: 5.0                  # 最低期待利益 (USD)
+  max_slippage: 0.8                    # 許容スリッページ (%)
+  max_gas_price_gwei: 30               # 最大ガス価格
+
+risk_management:
+  max_drawdown_percent: 20.0           # 許容ドローダウン率 (%)
+  max_daily_loss_usd: 100
+  stop_on_consecutive_failures: 3
+
+pairs:
+  - "WETH/USDC"
+  - "WBTC/USDC"
+
+dexes:
+  - name: "uniswap_v3"
+    router_address: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"
+  - name: "sushiswap"
+    router_address: "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506"
+
+telegram:
+  enabled: false                       # 本番時はtrueに
+  chat_id: "YOUR_CHAT_ID"
+  token: "YOUR_BOT_TOKEN"
+
+logging:
+  level: "INFO"
+  file: "logs/bot.log"

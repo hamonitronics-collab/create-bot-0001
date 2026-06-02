@@ -1,0 +1,6 @@
+web3
+asyncio
+pyyaml
+requests
+python-dotenv
+
