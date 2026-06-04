@@ -14,7 +14,7 @@ trading:
 risk_management:
   max_drawdown_percent: 20.0           # 許容ドローダウン率 (%)
   max_daily_loss_usd: 100
-  stop_on_consecutive_failures: 3
+  stop_on_consecutive_failures: 3      # 連続失敗回数
 
 pairs:
   - "WETH/USDC"
