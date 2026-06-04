@@ -21,47 +21,57 @@ class ArbitrageBot:
     DEX間アービトラージBotのメインクラス
     要件定義 v0.3 に準拠した統合クラス
     """
-    
+
     def __init__(self):
         # 設定読み込み
         self.config = load_config()
-        
+
         # LoggerとTelegram初期化
         self.logger = BotLogger(self.config)
         self.telegram = TelegramNotifier(self.config, self.logger)
-        
-        # 各モジュールの初期化（すべてlogger/telegramと連携）
+
+        # 各モジュールの初期化
         self.price_monitor = PriceMonitor(self.config, self.logger, self.telegram)
         self.detector = OpportunityDetector(self.config, self.logger, self.telegram)
         self.profitability = ProfitabilityCalculator(self.config, self.logger, self.telegram)
         self.executor = Executor(self.config, self.logger, self.telegram)
-        
+
         self.logger.info("✅ ArbitrageBot initialized successfully with all modules")
-    
+
     async def run(self):
         """メイン実行ループ"""
         await self.telegram.send_message("🚀 **Arbitrage Bot Started Successfully**")
         self.logger.info("Bot main loop started")
-        
+
+        # 並行実行するタスク一覧
+        tasks = [
+            asyncio.create_task(self.price_monitor.start_monitoring(), name="PriceMonitor"),
+            # 将来ここに追加予定：
+            # asyncio.create_task(self.detector.start_detecting(), name="OpportunityDetector"),
+            # asyncio.create_task(self.executor.start_executor(), name="Executor"),
+        ]
+
         try:
-            # 価格監視タスクを開始
-            monitor_task = asyncio.create_task(self.price_monitor.start_monitoring())
-            
-            # メインループ（将来的にイベント駆動に拡張可能）
-            while True:
-                await asyncio.sleep(10)  # メインループは軽めに（監視は別タスク）
-                
-                # ここで将来的に本格的な統合処理を追加可能
-                
+            # 全タスクを並行実行（1つが例外を起こしても他は継続）
+            await asyncio.gather(*tasks, return_exceptions=True)
+
         except asyncio.CancelledError:
             self.logger.info("Bot shutting down gracefully...")
         except Exception as e:
             self.logger.critical(f"Critical error in main loop: {e}")
             await self.telegram.send_message(f"❌ **Critical Error**: {e}")
         finally:
+            # タスクのクリーンアップ
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
             await self.telegram.send_message("⛔ **Bot Stopped**")
             self.logger.info("Bot shutdown completed")
-    
+
     def stop(self):
         """安全停止"""
         self.logger.info("Bot stopped by user request")
@@ -69,7 +79,7 @@ class ArbitrageBot:
 
 async def main():
     bot = ArbitrageBot()
-    
+
     try:
         await bot.run()
     except KeyboardInterrupt:
