@@ -1,73 +1,58 @@
 import yaml
 import os
-from typing import Dict
 from pathlib import Path
+from typing import Dict, Any
+import sys
 
-def load_config(config_path: str = "config/config.yaml") -> Dict:
+def load_config() -> Dict[str, Any]:
     """
-    config.yaml を読み込んで辞書形式で返す
-    要件定義: すべての設定を一元管理
+    config.yaml を読み込む
+    - プロジェクトルートからの相対パスで探す
+    - 環境変数対応
     """
+    # プロジェクトルートの絶対パスを取得（実行場所に依存しない）
+    project_root = Path(__file__).parent.parent
+    config_path = project_root / "config" / "config.yaml"
+
+    if not config_path.exists():
+        print(f"❌ エラー: 設定ファイルが見つかりません → {config_path}")
+        sys.exit(1)
+
     try:
-        # 絶対パスに変換（実行場所に関係なく読み込めるように）
-        base_dir = Path(__file__).parent.parent.parent  # project root
-        full_path = base_dir / config_path
-        
-        if not full_path.exists():
-            # 相対パスも試す
-            full_path = Path(config_path)
-        
-        with open(full_path, 'r', encoding='utf-8') as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
-        
-        print(f"✅ Config loaded successfully from: {full_path}")
+
+        if config is None:
+            raise ValueError("YAMLファイルが空です")
+
+        # 環境変数で上書き（.env対応）
+        config = override_with_env(config)
+
+        # 簡単なバリデーション
+        validate_config(config)
+
+        print(f"✅ 設定ファイルを読み込みました: {config_path}")
         return config
-        
-    except FileNotFoundError:
-        print(f"❌ Config file not found: {config_path}")
-        # デフォルト設定を返す（フォールバック）
-        return get_default_config()
-        
-    except yaml.YAMLError as e:
-        print(f"❌ YAML parsing error: {e}")
-        return get_default_config()
-        
+
     except Exception as e:
-        print(f"❌ Unexpected error loading config: {e}")
-        return get_default_config()
+        print(f"❌ 設定ファイル読み込みエラー: {e}")
+        sys.exit(1)
 
 
-def get_default_config() -> Dict:
-    """設定ファイルが見つからない場合のデフォルト設定"""
-    return {
-        'bot': {
-            'chain': 'arbitrum',
-            'monitoring_interval': 2.0,
-        },
-        'trading': {
-            'price_difference_threshold': 0.5,
-            'min_profit_usd': 5.0,
-            'max_slippage': 0.8,
-            'max_gas_price_gwei': 30,
-        },
-        'risk_management': {
-            'max_drawdown_percent': 20.0,
-            'stop_on_consecutive_failures': 3,
-        },
-        'pairs': ['WETH/USDC'],
-        'dexes': ['uniswap_v3', 'sushiswap'],
-        'telegram': {
-            'enabled': False,
-            'chat_id': '',
-            'token': ''
-        },
-        'logging': {
-            'level': 'INFO'
-        }
-    }
+def override_with_env(config: Dict) -> Dict:
+    """環境変数で設定を上書き（.env対応）"""
+    # 例: TELEGRAM_TOKEN が環境変数にあれば上書き
+    if os.getenv("TELEGRAM_TOKEN"):
+        if "telegram" not in config:
+            config["telegram"] = {}
+        config["telegram"]["token"] = os.getenv("TELEGRAM_TOKEN")
+
+    return config
 
 
-# 直接実行した場合のテスト用
-if __name__ == "__main__":
-    config = load_config()
-    print("Loaded config keys:", list(config.keys()))
+def validate_config(config: Dict):
+    """必須項目の簡易チェック"""
+    required = ["bot", "trading", "risk_management"]
+    for key in required:
+        if key not in config:
+            raise ValueError(f"必須セクション '{key}' がconfig.yamlにありません")
