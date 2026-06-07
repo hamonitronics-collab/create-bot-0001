@@ -1,4 +1,5 @@
 from typing import Dict, Optional
+
 from ..utils.logger import BotLogger
 from ..utils.telegram import TelegramNotifier
 
@@ -17,20 +18,20 @@ class ProfitabilityCalculator:
         trading = config.get('trading', {})
         self.min_profit_usd = trading.get('min_profit_usd', 5.0)
         self.max_slippage = trading.get('max_slippage', 0.5)
+
         self.logger.info(f"ProfitabilityCalculator initialized (min_profit: ${self.min_profit_usd})")
 
     def calculate_profitability(self, opportunity: Dict) -> Optional[Dict]:
         """
-        機会の収益性を計算
-        ガス代・スリッページを考慮して実行可否を判断
+        機会の収益性を計算し、実行可否を判断
         """
         try:
-            price_diff = opportunity.get('price_diff_percent', 0)
+            price_diff = opportunity.get('price_diff_percent', 0.0)
 
-            # 簡易計算（実際はガス代見積もり + 流動性考慮が必要）
-            estimated_profit = price_diff * 10  # 仮の計算例（後で精密化）
+            # 簡易収益計算（実際はガス代見積もりや流動性を精密に計算する）
+            estimated_profit = price_diff * 20   # 仮の係数（後で調整）
 
-            # スリッページ考慮後の期待利益
+            # スリッページ考慮
             after_slippage = estimated_profit * (1 - self.max_slippage / 100)
 
             is_profitable = after_slippage >= self.min_profit_usd
@@ -39,11 +40,11 @@ class ProfitabilityCalculator:
                 **opportunity,
                 "estimated_profit_usd": round(after_slippage, 2),
                 "is_profitable": is_profitable,
-                "reason": "利益十分" if is_profitable else "最低利益未達"
+                "reason": "実行可能" if is_profitable else f"最低利益未達 (${after_slippage:.2f})"
             }
 
             if is_profitable:
-                self.logger.warning(f"✅ 収益性OK: ${after_slippage:.2f} ({opportunity['pair']})")
+                self.logger.warning(f"✅ 収益性OK: ${after_slippage:.2f} | {opportunity.get('pair')}")
             else:
                 self.logger.debug(f"利益不足: ${after_slippage:.2f}")
 
@@ -51,3 +52,4 @@ class ProfitabilityCalculator:
 
         except Exception as e:
             self.logger.error(f"収益性計算エラー: {e}")
+            return None
