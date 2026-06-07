@@ -1,11 +1,17 @@
 from web3 import Web3
-from web3.middleware import geth_poa_middleware
+# 新しいバージョンのweb3.py対応（geth_poa_middlewareのimport変更）
+try:
+    from web3.middleware import geth_poa_middleware
+except ImportError:
+    # 新しいweb3.py（v6以降）対応
+    from web3.providers.rpc.middleware import geth_poa_middleware
+
 from ..utils.logger import BotLogger
+
 
 class RPCManager:
     """
     RPC接続を管理するモジュール
-    複数チェーン対応の基盤
     """
 
     def __init__(self, config: dict, logger: BotLogger):
