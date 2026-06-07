@@ -1,10 +1,11 @@
+from time import time
+
 from web3 import Web3
 from ..utils.logger import BotLogger
-import time
 
 class RPCManager:
     """
-    RPC接続管理（非常に厳密な接続検証）
+    RPC接続管理（複数回検証で確実性を高める）
     """
 
     def __init__(self, config: dict, logger: BotLogger, stop_callback=None):
@@ -25,9 +26,9 @@ class RPCManager:
             rpc_config = self.config.get('rpc', {}).get(self.chain, {})
             rpc_url = rpc_config.get('url')
 
-            if not rpc_url or "rpcdee" in rpc_url:  # テスト用
-                self.logger.error(f"無効なRPC URLです: {rpc_url}")
-                return self._handle_failure("無効URL")
+            if not rpc_url:
+                self.logger.error(f"RPC URLが設定されていません: {self.chain}")
+                return self._handle_failure("URL未設定")
 
             self.logger.info(f"RPC接続試行: {self.chain} → {rpc_url}")
 
@@ -40,20 +41,25 @@ class RPCManager:
                 except ImportError:
                     pass
 
-            # より厳密な接続テスト
-            if not self.w3.is_connected():
-                return self._handle_failure("is_connected()失敗")
-
-            # 実際にブロック番号を取得して検証
-            block = self.w3.eth.block_number
-            self.logger.info(f"✅ RPC接続成功: {self.chain} | Latest Block: {block}")
-            self.consecutive_failures = 0
-            return True
+            # 複数回検証で確実性を高める
+            for attempt in range(3):  # 3回試行
+                try:
+                    if not self.w3.is_connected():
+                        raise Exception("is_connected failed")
+                    block = self.w3.eth.block_number
+                    self.logger.info(f"✅ RPC接続成功: {self.chain} | Latest Block: {block}")
+                    self.consecutive_failures = 0
+                    return True
+                except Exception as e:
+                    if attempt == 2:  # 最終試行
+                        return self._handle_failure(f"検証失敗: {e}")
+                    time.sleep(1)  # 少し待って再試行
 
         except Exception as e:
             return self._handle_failure(str(e))
 
     def _handle_failure(self, error_msg="不明"):
+        # （前回と同じ _handle_failure ロジック）
         self.consecutive_failures += 1
         self.logger.error(f"RPC接続失敗 ({self.consecutive_failures}/{self.max_consecutive_failures}): {error_msg}")
 

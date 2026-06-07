@@ -8,8 +8,7 @@ bot:
 
 rpc:
   arbitrum-sepolia:
-    url: "https://sepolia-rollup.arbitrum.io/rpcdee" #テスト用失敗RPC（接続失敗のテストに使用）
-    #url: "https://sepolia-rollup.arbitrum.io/rpc"   # 公式RPC（無料・簡単）
+    url: "https://sepolia-rollup.arbitrum.io/rpc"   # 公式RPC（無料・簡単）
     # url: "https://arb-sepolia.g.alchemy.com/v2/あなたのAlchemyキー"  # Alchemyを使う場合（高速）
     ws_url: ""   # WebSocket（後で高速化用）
 
@@ -30,7 +29,7 @@ pairs:
 
 dexes:
   uniswap_v3:
-    quoter_address: "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"  # Arbitrum Sepolia
+    quoter_address: "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"  # Arbitrum Sepolia QuoterV2
     router_address: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"
   sushiswap:
     router_address: "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506"
