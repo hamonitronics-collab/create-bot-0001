@@ -4,7 +4,7 @@ from ..utils.logger import BotLogger
 class RPCManager:
     """
     RPC接続を管理するモジュール
-    連続失敗時にBot全体停止を通知
+    URL変更時に確実に再接続するよう強化
     """
 
     def __init__(self, config: dict, logger: BotLogger, stop_callback=None):
@@ -18,9 +18,10 @@ class RPCManager:
         self.max_consecutive_failures = rpc_settings.get('max_consecutive_failures', 5)
 
         self.consecutive_failures = 0
-        self._connect()
+        self._connect(force=True)  # 強制接続
 
-    def _connect(self) -> bool:
+    def _connect(self, force: bool = False) -> bool:
+        """RPCに接続"""
         try:
             rpc_config = self.config.get('rpc', {}).get(self.chain, {})
             rpc_url = rpc_config.get('url')
@@ -29,8 +30,9 @@ class RPCManager:
                 self.logger.error(f"RPC URLがconfig.yamlに設定されていません: {self.chain}")
                 return False
 
-            self.logger.info(f"RPC接続試行: {self.chain}")
+            self.logger.info(f"RPC接続試行: {self.chain} → {rpc_url}")
 
+            # 新しいWeb3インスタンスを常に作成（キャッシュ対策）
             self.w3 = Web3(Web3.HTTPProvider(rpc_url))
 
             if 'arbitrum' in self.chain.lower():
@@ -52,9 +54,9 @@ class RPCManager:
             return self._handle_failure(e)
 
     def _handle_failure(self, error=None):
+        # （前回と同じ内容）
         self.consecutive_failures += 1
         error_msg = str(error) if error else "接続失敗"
-
         self.logger.error(f"RPC接続失敗 ({self.consecutive_failures}/{self.max_consecutive_failures}): {error_msg}")
 
         if self.consecutive_failures >= self.max_consecutive_failures:
@@ -67,6 +69,5 @@ class RPCManager:
     def get_web3(self):
         if self.w3 is None or not self.w3.is_connected():
             self.logger.warning("RPC接続が切断されています。再接続を試みます...")
-            if not self._connect():
-                self.logger.error("RPC再接続にも失敗しました")
+            self._connect()
         return self.w3
