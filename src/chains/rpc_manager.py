@@ -4,18 +4,23 @@ from ..utils.logger import BotLogger
 class RPCManager:
     """
     RPC接続を管理するモジュール
-    web3.pyバージョン違いに頑健に対応
+    連続失敗時にBot全体停止を通知
     """
 
-    def __init__(self, config: dict, logger: BotLogger):
+    def __init__(self, config: dict, logger: BotLogger, stop_callback=None):
         self.config = config
         self.logger = logger
+        self.stop_callback = stop_callback
         self.w3 = None
         self.chain = config['bot'].get('chain', 'arbitrum-sepolia')
+
+        rpc_settings = config.get('rpc_settings', {})
+        self.max_consecutive_failures = rpc_settings.get('max_consecutive_failures', 5)
+
+        self.consecutive_failures = 0
         self._connect()
 
-    def _connect(self):
-        """RPCに接続"""
+    def _connect(self) -> bool:
         try:
             rpc_config = self.config.get('rpc', {}).get(self.chain, {})
             rpc_url = rpc_config.get('url')
@@ -24,32 +29,44 @@ class RPCManager:
                 self.logger.error(f"RPC URLがconfig.yamlに設定されていません: {self.chain}")
                 return False
 
-            self.logger.info(f"RPC接続試行: {self.chain} → {rpc_url}")
+            self.logger.info(f"RPC接続試行: {self.chain}")
 
             self.w3 = Web3(Web3.HTTPProvider(rpc_url))
 
-            # Arbitrum系POAミドルウェア（安全に処理）
             if 'arbitrum' in self.chain.lower():
                 try:
                     from web3.middleware import geth_poa_middleware
                     self.w3.middleware_onion.inject(geth_poa_middleware, layer=0)
                 except ImportError:
-                    self.logger.debug("POAミドルウェアはスキップ（必要ない場合あり）")
+                    pass
 
             if self.w3.is_connected():
                 block = self.w3.eth.block_number
-                self.logger.info(f"✅ RPC接続成功: {self.chain} | Latest Block: {block}")
+                self.logger.info(f"✅ RPC接続成功: {self.chain} | Block: {block}")
+                self.consecutive_failures = 0
                 return True
             else:
-                self.logger.error("RPC接続失敗")
-                return False
+                return self._handle_failure()
 
         except Exception as e:
-            self.logger.error(f"RPC接続エラー: {e}")
-            return False
+            return self._handle_failure(e)
+
+    def _handle_failure(self, error=None):
+        self.consecutive_failures += 1
+        error_msg = str(error) if error else "接続失敗"
+
+        self.logger.error(f"RPC接続失敗 ({self.consecutive_failures}/{self.max_consecutive_failures}): {error_msg}")
+
+        if self.consecutive_failures >= self.max_consecutive_failures:
+            self.logger.critical(f"🚨 RPC接続が{self.max_consecutive_failures}回連続失敗しました。Botを停止します。")
+            if self.stop_callback:
+                self.stop_callback("RPC連続接続失敗")
+
+        return False
 
     def get_web3(self):
         if self.w3 is None or not self.w3.is_connected():
-            self.logger.warning("RPC未接続。再接続します")
-            self._connect()
+            self.logger.warning("RPC接続が切断されています。再接続を試みます...")
+            if not self._connect():
+                self.logger.error("RPC再接続にも失敗しました")
         return self.w3

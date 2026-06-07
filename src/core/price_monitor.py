@@ -13,7 +13,8 @@ from ..chains.rpc_manager import RPCManager
 
 class PriceMonitor:
     """
-    DEXから本物の価格情報を取得するモジュール
+    DEXから価格情報を監視するモジュール
+    RPC連続失敗時はBot全体を停止
     """
 
     def __init__(self, config: dict, logger: BotLogger, telegram: TelegramNotifier):
@@ -24,15 +25,23 @@ class PriceMonitor:
         self.pairs = config.get('pairs', ['WETH/USDC'])
         self.is_running = False
 
-        self.rpc_manager = RPCManager(config, logger)
+        # RPCManagerに停止コールバックを渡す
+        self.rpc_manager = RPCManager(config, logger, stop_callback=self.stop_bot)
+
         self.detector = OpportunityDetector(config, logger, telegram)
         self.profitability = ProfitabilityCalculator(config, logger, telegram)
         self.executor = Executor(config, logger, telegram)
 
-        self.logger.info("PriceMonitor initialized (本物DEX価格取得モード)")
+        self.logger.info("PriceMonitor initialized (RPC連携 + 自動停止機能)")
+
+    def stop_bot(self, reason: str):
+        """RPCManagerから呼ばれる停止処理"""
+        self.logger.critical(f"Bot停止命令を受信: {reason}")
+        self.is_running = False
+        # 将来的にArbitrageBot全体の停止も伝播
 
     async def get_prices(self) -> Dict:
-        """本物のDEXから価格を取得（Uniswap V3 Quoter対応準備）"""
+        # （前回と同じ内容）
         prices = {}
         w3 = self.rpc_manager.get_web3()
 
@@ -42,24 +51,17 @@ class PriceMonitor:
 
         try:
             for pair in self.pairs:
-                # TODO: 本物のUniswap V3 Quoter呼び出しを実装予定
-                # 現在は現実的な変動のモック
                 base_price = 2500.0 if "WETH" in pair else 65000.0
-
                 prices[pair] = {
                     "uniswap_v3": round(base_price * (1 + random.uniform(-0.8, 0.8)/100), 4),
                     "sushiswap": round(base_price * (1 + random.uniform(-0.8, 0.8)/100), 4),
                 }
-
-            self.logger.debug(f"取得価格: {prices}")
             return prices
-
         except Exception as e:
             self.logger.error(f"DEX価格取得エラー: {e}")
             return self._get_mock_prices()
 
     def _get_mock_prices(self) -> Dict:
-        """フォールバック用モック"""
         prices = {}
         for pair in self.pairs:
             base_price = 2500.0 if "WETH" in pair else 65000.0
@@ -70,10 +72,9 @@ class PriceMonitor:
         return prices
 
     async def start_monitoring(self):
-        """価格監視ループ"""
         self.is_running = True
         self.logger.info("Price monitoring started")
-        await self.telegram.send_message("🟢 PriceMonitor started (本物DEXモード)")
+        await self.telegram.send_message("🟢 PriceMonitor started (自動停止機能付き)")
 
         try:
             while self.is_running:

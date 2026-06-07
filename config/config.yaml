@@ -42,3 +42,7 @@ telegram:
 logging:
   level: "INFO"
   file: "logs/bot.log"
+
+rpc_settings:
+  max_consecutive_failures: 5     # RPC接続失敗の連続許容回数
+  reconnect_interval: 10          # 再接続試行間隔（秒） ※将来的に使用
