@@ -5,7 +5,7 @@ from ..utils.logger import BotLogger
 class RPCManager:
     """
     RPC接続を管理するモジュール
-    将来的に複数チェーン・複数プロバイダー対応
+    複数チェーン対応の基盤
     """
 
     def __init__(self, config: dict, logger: BotLogger):
@@ -22,17 +22,20 @@ class RPCManager:
             rpc_url = rpc_config.get('url')
 
             if not rpc_url:
-                self.logger.error(f"RPC URLが設定されていません: {self.chain}")
+                self.logger.error(f"RPC URLがconfig.yamlに設定されていません: {self.chain}")
                 return False
+
+            self.logger.info(f"RPC接続試行: {self.chain} → {rpc_url}")
 
             self.w3 = Web3(Web3.HTTPProvider(rpc_url))
 
             # Arbitrum系はPOAミドルウェアが必要
-            if 'arbitrum' in self.chain:
+            if 'arbitrum' in self.chain.lower():
                 self.w3.middleware_onion.inject(geth_poa_middleware, layer=0)
 
             if self.w3.is_connected():
-                self.logger.info(f"✅ RPC接続成功: {self.chain} | Latest Block: {self.w3.eth.block_number}")
+                block = self.w3.eth.block_number
+                self.logger.info(f"✅ RPC接続成功: {self.chain} | Latest Block: {block}")
                 return True
             else:
                 self.logger.error("RPC接続失敗")
@@ -43,4 +46,8 @@ class RPCManager:
             return False
 
     def get_web3(self):
+        """Web3インスタンスを返す"""
+        if self.w3 is None or not self.w3.is_connected():
+            self.logger.warning("RPCが接続されていません。再接続します")
+            self._connect()
         return self.w3
