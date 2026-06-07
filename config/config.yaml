@@ -2,8 +2,9 @@
 # すべてのパラメータをここで管理（要件定義準拠）
 
 bot:
-  chain: "arbitrum"                    # 運用チェーン（arbitrum, base, solanaなどに変更可能）
-  monitoring_interval: 2.0             # 価格監視間隔（秒）
+chain: "arbitrum-sepolia"          # ← テストネットに変更（例）
+  # chain: "arbitrum"                # 本番用（コメントアウト）
+  monitoring_interval: 2.0
 
 trading:
   price_difference_threshold: 0.5      # 価格差閾値 (%). これ以上で機会検知
