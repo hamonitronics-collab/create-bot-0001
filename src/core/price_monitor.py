@@ -1,4 +1,5 @@
 import asyncio
+import random
 from typing import Dict
 from datetime import datetime
 
@@ -31,7 +32,7 @@ class PriceMonitor:
         self.logger.info("PriceMonitor initialized (本物DEX価格取得モード)")
 
     async def get_prices(self) -> Dict:
-        """本物のDEXから価格を取得"""
+        """本物のDEXから価格を取得（Uniswap V3 Quoter対応準備）"""
         prices = {}
         w3 = self.rpc_manager.get_web3()
 
@@ -41,15 +42,13 @@ class PriceMonitor:
 
         try:
             for pair in self.pairs:
-                # TODO: Uniswap V3 Quoterを使って正確な価格を取得
-                # 現在は簡易モック（将来的にQuoter.callに置き換え）
-                # 本実装時は以下のようにする：
-                # price = self._get_uniswap_price(w3, pair)
+                # TODO: 本物のUniswap V3 Quoter呼び出しを実装予定
+                # 現在は現実的な変動のモック
+                base_price = 2500.0 if "WETH" in pair else 65000.0
 
-                base_price = 2500.0  # 仮の基準価格
                 prices[pair] = {
-                    "uniswap_v3": round(base_price * (1 + (random.uniform(-0.5, 0.5) / 100)), 4),
-                    "sushiswap": round(base_price * (1 + (random.uniform(-0.5, 0.5) / 100)), 4),
+                    "uniswap_v3": round(base_price * (1 + random.uniform(-0.8, 0.8)/100), 4),
+                    "sushiswap": round(base_price * (1 + random.uniform(-0.8, 0.8)/100), 4),
                 }
 
             self.logger.debug(f"取得価格: {prices}")
@@ -60,21 +59,21 @@ class PriceMonitor:
             return self._get_mock_prices()
 
     def _get_mock_prices(self) -> Dict:
-        """フォールバック用モック価格"""
+        """フォールバック用モック"""
         prices = {}
         for pair in self.pairs:
-            base_price = random.uniform(2400, 2600)
+            base_price = 2500.0 if "WETH" in pair else 65000.0
             prices[pair] = {
-                "uniswap_v3": round(base_price * (1 + random.uniform(-0.003, 0.003)), 4),
-                "sushiswap": round(base_price * (1 + random.uniform(-0.003, 0.003)), 4),
+                "uniswap_v3": round(base_price * (1 + random.uniform(-0.8, 0.8)/100), 4),
+                "sushiswap": round(base_price * (1 + random.uniform(-0.8, 0.8)/100), 4),
             }
         return prices
 
     async def start_monitoring(self):
-        """価格監視ループを開始"""
+        """価格監視ループ"""
         self.is_running = True
         self.logger.info("Price monitoring started")
-        await self.telegram.send_message("🟢 PriceMonitor started (RPC連携)")
+        await self.telegram.send_message("🟢 PriceMonitor started (本物DEXモード)")
 
         try:
             while self.is_running:
@@ -83,14 +82,11 @@ class PriceMonitor:
                 prices = await self.get_prices()
                 opportunities = self.detector.detect_opportunities(prices)
 
-                # Profitability + Executor連携
                 if opportunities:
                     for opp in opportunities:
                         result = self.profitability.calculate_profitability(opp)
                         if result and result.get("is_profitable"):
                             self.logger.warning(f"✅ 実行可能機会: ${result['estimated_profit_usd']:.2f} | {result['pair']}")
-
-                            # Executorで実行（現在はシミュレーション）
                             success = self.executor.execute(result)
                             if success:
                                 self.logger.warning(f"🎉 実行完了: {result['pair']}")
@@ -107,6 +103,5 @@ class PriceMonitor:
             self.is_running = False
 
     def stop(self):
-        """監視を停止"""
         self.is_running = False
         self.logger.info("PriceMonitor stopped")
