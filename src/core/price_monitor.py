@@ -5,6 +5,8 @@ from datetime import datetime
 
 from ..utils.logger import BotLogger
 from ..utils.telegram import TelegramNotifier
+# OpportunityDetectorをインポート（連携用）
+from .opportunity_detector import OpportunityDetector
 
 
 class PriceMonitor:
@@ -20,6 +22,9 @@ class PriceMonitor:
         self.monitoring_interval = config['bot'].get('monitoring_interval', 2.0)
         self.pairs = config.get('pairs', ['WETH/USDC'])
         self.is_running = False
+
+        # OpportunityDetectorを初期化
+        self.detector = OpportunityDetector(config, logger, telegram)
 
         self.logger.info("PriceMonitor initialized")
 
@@ -53,10 +58,14 @@ class PriceMonitor:
 
                 prices = await self.get_prices()
 
-                # 将来的にここでOpportunityDetectorに価格を渡す
-                # await self.detector.detect_opportunities(prices)
+                # OpportunityDetectorに価格を渡して機会検知
+                opportunities = self.detector.detect_opportunities(prices)
 
-                self.logger.info(f"[{start_time.strftime('%H:%M:%S')}] {len(self.pairs)}ペアを監視完了")
+                if opportunities:
+                    self.logger.warning(f"🎯 検知された機会: {len(opportunities)}件")
+                    # await self.telegram.send_message(f"🎯 機会検知: {len(opportunities)}件")
+
+                self.logger.info(f"[{start_time.strftime('%H:%M:%S')}] Monitored {len(self.pairs)} pairs")
 
                 await asyncio.sleep(self.monitoring_interval)
 
