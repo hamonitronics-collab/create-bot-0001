@@ -1,6 +1,8 @@
 from typing import Dict, Optional
 from web3 import Web3
 from web3.exceptions import ContractLogicError
+import json
+
 from ..utils.logger import BotLogger
 from ..utils.telegram import TelegramNotifier
 
@@ -8,7 +10,7 @@ from ..utils.telegram import TelegramNotifier
 class Executor:
     """
     アービトラージ機会を実行するモジュール
-    現在: 本物見積もり段階（Quoter使用）
+    現在: Uniswap V3 Quoterによる本物見積もり段階
     """
 
     def __init__(self, config: dict, logger: BotLogger, telegram: TelegramNotifier):
@@ -29,7 +31,22 @@ class Executor:
 
         # Arbitrum Sepolia Uniswap V3 アドレス
         self.router_address = "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"
-        self.quoter_address = "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"  # Sepolia Quoter
+        self.quoter_address = "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"  # Sepolia Quoter v2
+
+        # Quoter ABI（簡易版）
+        self.quoter_abi = [{
+            "inputs": [
+                {"name": "tokenIn", "type": "address"},
+                {"name": "tokenOut", "type": "address"},
+                {"name": "fee", "type": "uint24"},
+                {"name": "amountIn", "type": "uint256"},
+                {"name": "sqrtPriceLimitX96", "type": "uint160"}
+            ],
+            "name": "quoteExactInputSingle",
+            "outputs": [{"name": "amountOut", "type": "uint256"}],
+            "stateMutability": "view",
+            "type": "function"
+        }]
 
         self.logger.info("Executor initialized (Uniswap V3 Quoter連携完了)")
 
@@ -46,40 +63,55 @@ class Executor:
 
     def execute(self, opportunity: Dict) -> bool:
         """
-        本物見積もりを実行（Quoter使用）
-        まだ実際の送信は行わない（安全）
+        Uniswap V3 Quoterを使って本物見積もりを実行
         """
         try:
             if not opportunity.get('is_profitable', False):
                 return False
 
             pair = opportunity['pair']
-            self.logger.warning(f"🚀 本物見積もり開始: {pair} | 期待利益 ${opportunity.get('estimated_profit_usd')}")
+            self.logger.warning(f"🚀 Quoter本物見積もり開始: {pair}")
 
-            # TODO: 将来的にbuy_dex / sell_dexに応じてRouterを選択
-            # 現在は簡易的にQuoterで出力額を見積もり
+            # 簡易的にWETH → USDCの見積もり例（実際はopportunityからtokenIn/Outを取得）
+            # 注意: Arbitrum Sepoliaの実際のトークンアドレスを使用
+            weth = "0x82af49447d8a07e3bd95bd0d56f35241523fbab1"  # WETH
+            usdc = "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8"   # USDC
 
-            # ガス代見積もり（簡易）
-            gas_estimate = 250000  # 仮値
+            quoter_contract = self.w3.eth.contract(address=self.quoter_address, abi=self.quoter_abi)
+
+            # Quoter呼び出し例（1 ETH相当を交換した場合の見積もり）
+            amount_in = self.w3.to_wei(0.01, 'ether')   # 0.01 ETH分で見積もり
+
+            amount_out = quoter_contract.functions.quoteExactInputSingle(
+                weth,
+                usdc,
+                3000,          # 0.3% fee tier
+                amount_in,
+                0
+            ).call()
+
+            amount_out_human = self.w3.from_wei(amount_out, 'mwei')  # USDCは6 decimals
+
+            self.logger.info(f"Quoter見積もり結果: {amount_out_human:.4f} USDC")
+
+            # ガス代見積もり
+            gas_estimate = 250000
             gas_price = self.w3.eth.gas_price
             gas_cost_eth = self.w3.from_wei(gas_price * gas_estimate, 'ether')
-            gas_cost_usd = float(gas_cost_eth) * 2500  # ETH価格を仮定
+            gas_cost_usd = float(gas_cost_eth) * 2500   # 仮ETH価格
 
-            self.logger.info(f"ガス代見積もり: ${gas_cost_usd:.4f}")
-
-            # 最終利益見積もり
             final_profit = opportunity.get('estimated_profit_usd', 0) - gas_cost_usd
 
-            if final_profit > 0:
-                self.logger.warning(f"✅ 本物見積もり完了 | 最終期待利益 ${final_profit:.2f} | {pair}")
+            if final_profit > 0.5:
+                self.logger.warning(f"✅ Quoter本物見積もり完了 | 最終期待利益 ${final_profit:.2f} | {pair}")
                 self.consecutive_failures = 0
                 return True
             else:
-                self.logger.warning(f"❌ ガス代で赤字の見込み: {pair}")
+                self.logger.warning(f"❌ ガス代考慮後赤字の見込み: {pair}")
                 return False
 
         except Exception as e:
-            self.logger.error(f"実行エラー: {e}")
+            self.logger.error(f"Quoter実行エラー: {e}")
             self.consecutive_failures += 1
             if self.consecutive_failures >= self.max_consecutive_failures:
                 self.logger.critical("連続失敗のためBot停止を推奨します")
