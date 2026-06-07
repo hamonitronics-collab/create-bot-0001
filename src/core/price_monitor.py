@@ -120,9 +120,10 @@ class PriceMonitor:
         return prices
 
     async def start_monitoring(self):
+        """価格監視ループを開始"""
         self.is_running = True
         self.logger.info("Price monitoring started")
-        await self.telegram.send_message("🟢 PriceMonitor started (Quoter連携)")
+        await self.telegram.send_message("🟢 PriceMonitor started")
 
         try:
             while self.is_running:
@@ -131,14 +132,17 @@ class PriceMonitor:
                 prices = await self.get_prices()
                 opportunities = self.detector.detect_opportunities(prices)
 
+                # Profitability + Executor連携
                 if opportunities:
                     for opp in opportunities:
                         result = self.profitability.calculate_profitability(opp)
                         if result and result.get("is_profitable"):
-                            self.logger.warning(f"✅ 実行可能機会: ${result['estimated_profit_usd']:.2f} | {result['pair']}")
+                            self.logger.warning(f"✅ 実行可能機会: ${result['estimated_profit_usd']} | {result['pair']}")
+
+                            # === Executorに実行を依頼 ===
                             success = self.executor.execute(result)
                             if success:
-                                self.logger.warning(f"🎉 実行完了: {result['pair']}")
+                                self.logger.warning(f"🎯 Executorが処理完了: {result['pair']}")
 
                 self.logger.info(f"[{start_time.strftime('%H:%M:%S')}] {len(self.pairs)}ペアを監視完了")
 
