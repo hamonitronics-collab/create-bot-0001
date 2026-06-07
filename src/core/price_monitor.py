@@ -6,7 +6,8 @@ from datetime import datetime
 from ..utils.logger import BotLogger
 from ..utils.telegram import TelegramNotifier
 from .opportunity_detector import OpportunityDetector
-from .profitability import ProfitabilityCalculator   # ← 追加
+from .profitability import ProfitabilityCalculator
+from .executor import Executor   # ← 追加
 
 
 class PriceMonitor:
@@ -22,13 +23,14 @@ class PriceMonitor:
         self.pairs = config.get('pairs', ['WETH/USDC'])
         self.is_running = False
 
+        # 各モジュールの初期化
         self.detector = OpportunityDetector(config, logger, telegram)
-        self.profitability = ProfitabilityCalculator(config, logger, telegram)  # ← 追加
+        self.profitability = ProfitabilityCalculator(config, logger, telegram)
+        self.executor = Executor(config, logger, telegram)  # ← 追加
 
         self.logger.info("PriceMonitor initialized")
 
     async def get_prices(self) -> Dict[str, Dict[str, float]]:
-        # （変更なし）
         prices = {}
         for pair in self.pairs:
             base_price = random.uniform(2400, 2600)
@@ -51,12 +53,17 @@ class PriceMonitor:
                 prices = await self.get_prices()
                 opportunities = self.detector.detect_opportunities(prices)
 
-                # === ProfitabilityCalculatorと連携 ===
+                # Profitability + Executor連携
                 if opportunities:
                     for opp in opportunities:
                         result = self.profitability.calculate_profitability(opp)
                         if result and result.get("is_profitable"):
                             self.logger.warning(f"✅ 実行可能機会: ${result['estimated_profit_usd']} | {result['pair']}")
+
+                            # Executorで実行（現在はシミュレーション）
+                            success = self.executor.execute(result)
+                            if success:
+                                self.logger.warning(f"🎉 実行完了: {result['pair']}")
 
                 self.logger.info(f"[{start_time.strftime('%H:%M:%S')}] {len(self.pairs)}ペアを監視完了")
 
