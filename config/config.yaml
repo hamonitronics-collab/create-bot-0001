@@ -28,9 +28,10 @@ pairs:
   - "WBTC/USDC"
 
 dexes:
-  - name: "uniswap_v3"
+  uniswap_v3:
+    quoter_address: "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"  # Arbitrum Sepolia
     router_address: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"
-  - name: "sushiswap"
+  sushiswap:
     router_address: "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506"
 
 telegram:

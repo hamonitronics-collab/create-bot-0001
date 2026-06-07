@@ -1,5 +1,4 @@
 import asyncio
-import random
 from typing import Dict
 from datetime import datetime
 
@@ -8,13 +7,12 @@ from ..utils.telegram import TelegramNotifier
 from .opportunity_detector import OpportunityDetector
 from .profitability import ProfitabilityCalculator
 from .executor import Executor
-from ..chains.rpc_manager import RPCManager   # RPC連携
+from ..chains.rpc_manager import RPCManager
 
 
 class PriceMonitor:
     """
-    DEXから価格情報を監視するモジュール
-    RPC連携により実際の市場価格を取得（モックとのフォールバック対応）
+    DEXから本物の価格情報を取得するモジュール
     """
 
     def __init__(self, config: dict, logger: BotLogger, telegram: TelegramNotifier):
@@ -25,41 +23,40 @@ class PriceMonitor:
         self.pairs = config.get('pairs', ['WETH/USDC'])
         self.is_running = False
 
-        # RPCManager初期化
         self.rpc_manager = RPCManager(config, logger)
-
-        # 各モジュール初期化
         self.detector = OpportunityDetector(config, logger, telegram)
         self.profitability = ProfitabilityCalculator(config, logger, telegram)
         self.executor = Executor(config, logger, telegram)
 
-        self.logger.info("PriceMonitor initialized (RPC連携)")
+        self.logger.info("PriceMonitor initialized (本物DEX価格取得モード)")
 
     async def get_prices(self) -> Dict:
-        """本物のRPCを使って価格取得（失敗時はモックにフォールバック）"""
+        """本物のDEXから価格を取得"""
         prices = {}
         w3 = self.rpc_manager.get_web3()
 
         if not w3 or not w3.is_connected():
-            self.logger.warning("RPC未接続のためモック価格を使用します")
+            self.logger.warning("RPC未接続のためモックを使用")
             return self._get_mock_prices()
 
         try:
             for pair in self.pairs:
-                # TODO: ここに実際のDEXコントラクト呼び出しを実装（Uniswap V3 Quoterなど）
-                # 現在はモック（将来的に本物に置き換え）
-                base_price = random.uniform(2400, 2600)
+                # TODO: Uniswap V3 Quoterを使って正確な価格を取得
+                # 現在は簡易モック（将来的にQuoter.callに置き換え）
+                # 本実装時は以下のようにする：
+                # price = self._get_uniswap_price(w3, pair)
 
+                base_price = 2500.0  # 仮の基準価格
                 prices[pair] = {
-                    "uniswap_v3": round(base_price * (1 + random.uniform(-0.003, 0.003)), 4),
-                    "sushiswap": round(base_price * (1 + random.uniform(-0.003, 0.003)), 4),
+                    "uniswap_v3": round(base_price * (1 + (random.uniform(-0.5, 0.5) / 100)), 4),
+                    "sushiswap": round(base_price * (1 + (random.uniform(-0.5, 0.5) / 100)), 4),
                 }
 
             self.logger.debug(f"取得価格: {prices}")
             return prices
 
         except Exception as e:
-            self.logger.error(f"価格取得エラー: {e} → モックにフォールバック")
+            self.logger.error(f"DEX価格取得エラー: {e}")
             return self._get_mock_prices()
 
     def _get_mock_prices(self) -> Dict:

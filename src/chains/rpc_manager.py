@@ -1,17 +1,10 @@
 from web3 import Web3
-# 新しいバージョンのweb3.py対応（geth_poa_middlewareのimport変更）
-try:
-    from web3.middleware import geth_poa_middleware
-except ImportError:
-    # 新しいweb3.py（v6以降）対応
-    from web3.providers.rpc.middleware import geth_poa_middleware
-
 from ..utils.logger import BotLogger
-
 
 class RPCManager:
     """
     RPC接続を管理するモジュール
+    web3.pyバージョン違いに頑健に対応
     """
 
     def __init__(self, config: dict, logger: BotLogger):
@@ -35,9 +28,13 @@ class RPCManager:
 
             self.w3 = Web3(Web3.HTTPProvider(rpc_url))
 
-            # Arbitrum系はPOAミドルウェアが必要
+            # Arbitrum系POAミドルウェア（安全に処理）
             if 'arbitrum' in self.chain.lower():
-                self.w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+                try:
+                    from web3.middleware import geth_poa_middleware
+                    self.w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+                except ImportError:
+                    self.logger.debug("POAミドルウェアはスキップ（必要ない場合あり）")
 
             if self.w3.is_connected():
                 block = self.w3.eth.block_number
@@ -52,8 +49,7 @@ class RPCManager:
             return False
 
     def get_web3(self):
-        """Web3インスタンスを返す"""
         if self.w3 is None or not self.w3.is_connected():
-            self.logger.warning("RPCが接続されていません。再接続します")
+            self.logger.warning("RPC未接続。再接続します")
             self._connect()
         return self.w3
