@@ -28,8 +28,8 @@ class ProfitabilityCalculator:
         try:
             price_diff = opportunity.get('price_diff_percent', 0.0)
 
-            # 簡易収益計算（実際はガス代見積もりや流動性を精密に計算する）
-            estimated_profit = price_diff * 20   # 仮の係数（後で調整）
+            # 簡易収益計算（*20は現在固定。将来的に精密化予定）
+            estimated_profit = price_diff * 20
 
             # スリッページ考慮
             after_slippage = estimated_profit * (1 - self.max_slippage / 100)
@@ -52,4 +52,3 @@ class ProfitabilityCalculator:
 
         except Exception as e:
             self.logger.error(f"収益性計算エラー: {e}")
-            return None
