@@ -1,6 +1,6 @@
 import asyncio
 import random
-from typing import Dict
+from typing import Dict, Callable
 from datetime import datetime
 
 from ..utils.logger import BotLogger
@@ -14,34 +14,36 @@ from ..chains.rpc_manager import RPCManager
 class PriceMonitor:
     """
     DEXから価格情報を監視するモジュール
-    RPC連続失敗時はBot全体を停止
+    RPC連続失敗時はArbitrageBot全体に停止を伝播
     """
 
-    def __init__(self, config: dict, logger: BotLogger, telegram: TelegramNotifier):
+    def __init__(self, config: dict, logger: BotLogger, telegram: TelegramNotifier, stop_callback: Callable = None):
         self.config = config
         self.logger = logger
         self.telegram = telegram
+        self.stop_callback = stop_callback  # ArbitrageBotへの停止通知用
         self.monitoring_interval = config['bot'].get('monitoring_interval', 2.0)
         self.pairs = config.get('pairs', ['WETH/USDC'])
         self.is_running = False
 
         # RPCManagerに停止コールバックを渡す
-        self.rpc_manager = RPCManager(config, logger, stop_callback=self.stop_bot)
+        self.rpc_manager = RPCManager(config, logger, stop_callback=self._handle_rpc_stop)
 
         self.detector = OpportunityDetector(config, logger, telegram)
         self.profitability = ProfitabilityCalculator(config, logger, telegram)
         self.executor = Executor(config, logger, telegram)
 
-        self.logger.info("PriceMonitor initialized (RPC連携 + 自動停止機能)")
+        self.logger.info("PriceMonitor initialized (全体停止伝播機能付き)")
 
-    def stop_bot(self, reason: str):
-        """RPCManagerから呼ばれる停止処理"""
-        self.logger.critical(f"Bot停止命令を受信: {reason}")
+    def _handle_rpc_stop(self, reason: str):
+        """RPCManagerから停止命令を受けた時の処理"""
+        self.logger.critical(f"RPC停止命令を受信: {reason}")
         self.is_running = False
-        # 将来的にArbitrageBot全体の停止も伝播
+        if self.stop_callback:
+            self.stop_callback(reason)  # ArbitrageBotへ伝播
 
     async def get_prices(self) -> Dict:
-        # （前回と同じ内容）
+        # （前回と同じ内容、省略可）
         prices = {}
         w3 = self.rpc_manager.get_web3()
 
@@ -62,6 +64,7 @@ class PriceMonitor:
             return self._get_mock_prices()
 
     def _get_mock_prices(self) -> Dict:
+        # （前回と同じ）
         prices = {}
         for pair in self.pairs:
             base_price = 2500.0 if "WETH" in pair else 65000.0
@@ -74,7 +77,7 @@ class PriceMonitor:
     async def start_monitoring(self):
         self.is_running = True
         self.logger.info("Price monitoring started")
-        await self.telegram.send_message("🟢 PriceMonitor started (自動停止機能付き)")
+        await self.telegram.send_message("🟢 PriceMonitor started (全体停止機能付き)")
 
         try:
             while self.is_running:
