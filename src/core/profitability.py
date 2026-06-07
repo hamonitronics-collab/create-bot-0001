@@ -52,3 +52,4 @@ class ProfitabilityCalculator:
 
         except Exception as e:
             self.logger.error(f"収益性計算エラー: {e}")
+            return None
