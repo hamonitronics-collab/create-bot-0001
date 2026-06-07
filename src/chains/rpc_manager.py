@@ -3,7 +3,7 @@ from ..utils.logger import BotLogger
 
 class RPCManager:
     """
-    RPC接続管理（デバッグ強化版）
+    RPC接続管理（より厳密な接続検証）
     """
 
     def __init__(self, config: dict, logger: BotLogger, stop_callback=None):
@@ -25,18 +25,30 @@ class RPCManager:
             rpc_url = rpc_config.get('url')
 
             if not rpc_url:
-                self.logger.error(f"RPC URLがconfig.yamlに設定されていません: {self.chain}")
+                self.logger.error(f"RPC URLが設定されていません: {self.chain}")
                 return self._handle_failure("URL未設定")
 
             self.logger.info(f"RPC接続試行: {self.chain} → {rpc_url}")
+
             self.w3 = Web3(Web3.HTTPProvider(rpc_url))
 
-            if self.w3.is_connected():
-                self.logger.info(f"✅ RPC接続成功 | Block: {self.w3.eth.block_number}")
-                self.consecutive_failures = 0
-                return True
-            else:
+            # Arbitrum対応
+            if 'arbitrum' in self.chain.lower():
+                try:
+                    from web3.middleware import geth_poa_middleware
+                    self.w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+                except ImportError:
+                    pass
+
+            # より厳密な接続確認
+            if not self.w3.is_connected():
                 return self._handle_failure("is_connected()がFalse")
+
+            # 実際にブロック番号を取得して本物の接続を確認
+            block = self.w3.eth.block_number
+            self.logger.info(f"✅ RPC接続成功: {self.chain} | Latest Block: {block}")
+            self.consecutive_failures = 0
+            return True
 
         except Exception as e:
             return self._handle_failure(str(e))
@@ -48,15 +60,12 @@ class RPCManager:
         if self.consecutive_failures >= self.max_consecutive_failures:
             self.logger.critical(f"🚨 RPC接続が{self.max_consecutive_failures}回連続失敗しました。Botを停止します。")
             if self.stop_callback:
-                self.logger.info("stop_callbackを呼び出します...")
                 self.stop_callback("RPC連続接続失敗")
-            else:
-                self.logger.error("stop_callbackが設定されていません！")
 
         return False
 
     def get_web3(self):
         if self.w3 is None or not self.w3.is_connected():
-            self.logger.warning("RPC切断検知 → 再接続試行")
+            self.logger.warning("RPC接続が切断されています。再接続します...")
             self._connect()
         return self.w3
