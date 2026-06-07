@@ -11,7 +11,7 @@ from src.utils.telegram import TelegramNotifier
 
 # コアモジュール
 from src.core.price_monitor import PriceMonitor
-# from src.core.executor import Executor  # まだ本格実装前はコメントアウト
+from src.core.profitability import ProfitabilityCalculator  # ← 追加
 
 
 class ArbitrageBot:
@@ -31,7 +31,8 @@ class ArbitrageBot:
 
             # モジュール初期化
             self.price_monitor = PriceMonitor(self.config, self.logger, self.telegram)
-            # self.profitability = ProfitabilityCalculator(...)  # 必要になったら追加
+            # ProfitabilityCalculatorもここで初期化（PriceMonitor内で使われるので必須）
+            self.profitability = ProfitabilityCalculator(self.config, self.logger, self.telegram)
 
             self.logger.info("✅ ArbitrageBot initialized successfully")
             self.running = True
