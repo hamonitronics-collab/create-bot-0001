@@ -6,6 +6,12 @@ bot:
    # chain: "arbitrum"                # 本番用（コメントアウト）
   monitoring_interval: 2.0
 
+rpc:
+  arbitrum-sepolia:
+    url: "https://sepolia-rollup.arbitrum.io/rpc"   # 公式RPC（無料・簡単）
+    # url: "https://arb-sepolia.g.alchemy.com/v2/あなたのAlchemyキー"  # Alchemyを使う場合（高速）
+    ws_url: ""   # WebSocket（後で高速化用）
+
 trading:
   price_difference_threshold: 0.3      # 価格差閾値 (%). これ以上で機会検知
   min_profit_usd: 0.1                  # 最低期待利益 (USD)
