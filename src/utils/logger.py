@@ -6,7 +6,7 @@ from datetime import datetime
 class BotLogger:
     """
     Bot全体で使用するロガー
-    config.yaml の logging 設定を尊重
+    config.yaml の logging 設定を尊重する
     """
 
     def __init__(self, config: dict):
@@ -14,7 +14,7 @@ class BotLogger:
         self.logger = self._setup_logger()
 
     def _setup_logger(self):
-        """ロガーの初期化"""
+        """ロガーの初期化（重複防止・ファイル出力対応）"""
         log_config = self.config.get('logging', {})
         level_name = log_config.get('level', 'INFO').upper()
         level = getattr(logging, level_name, logging.INFO)
@@ -22,7 +22,7 @@ class BotLogger:
         logger = logging.getLogger("ArbitrageBot")
         logger.setLevel(level)
 
-        # 既存ハンドラーをクリア（重複防止）
+        # 既存ハンドラーをクリア（再初期化時の重複防止）
         if logger.handlers:
             logger.handlers.clear()
 
