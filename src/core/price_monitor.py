@@ -5,13 +5,13 @@ from datetime import datetime
 
 from ..utils.logger import BotLogger
 from ..utils.telegram import TelegramNotifier
-from .opportunity_detector import OpportunityDetector   # ← 追加
+from .opportunity_detector import OpportunityDetector
+from .profitability import ProfitabilityCalculator   # ← 追加
 
 
 class PriceMonitor:
     """
     DEXから価格情報を監視するモジュール
-    要件定義: 設定ファイルで監視間隔・対象ペアを管理
     """
 
     def __init__(self, config: dict, logger: BotLogger, telegram: TelegramNotifier):
@@ -22,31 +22,24 @@ class PriceMonitor:
         self.pairs = config.get('pairs', ['WETH/USDC'])
         self.is_running = False
 
-        # OpportunityDetectorを初期化（連携）
         self.detector = OpportunityDetector(config, logger, telegram)
+        self.profitability = ProfitabilityCalculator(config, logger, telegram)  # ← 追加
 
         self.logger.info("PriceMonitor initialized")
 
     async def get_prices(self) -> Dict[str, Dict[str, float]]:
-        """
-        各DEXの価格を取得（現在はモック。将来的にWeb3 RPC + DEX Contractに置き換え）
-        """
+        # （変更なし）
         prices = {}
-
         for pair in self.pairs:
-            # モック価格（実際はRPCでリアルタイム取得）
             base_price = random.uniform(2400, 2600)
-
             prices[pair] = {
                 "uniswap_v3": round(base_price * (1 + random.uniform(-0.003, 0.003)), 4),
                 "sushiswap": round(base_price * (1 + random.uniform(-0.003, 0.003)), 4),
             }
-
         self.logger.debug(f"取得価格: {prices}")
         return prices
 
     async def start_monitoring(self):
-        """価格監視ループを開始"""
         self.is_running = True
         self.logger.info("Price monitoring started")
         await self.telegram.send_message("🟢 PriceMonitor started")
@@ -56,13 +49,14 @@ class PriceMonitor:
                 start_time = datetime.now()
 
                 prices = await self.get_prices()
-
-                # === OpportunityDetector呼び出し ===
                 opportunities = self.detector.detect_opportunities(prices)
 
+                # === ProfitabilityCalculatorと連携 ===
                 if opportunities:
-                    self.logger.warning(f"🎯 検知された機会: {len(opportunities)}件")
-                    # await self.telegram.send_message(f"🎯 機会検知: {len(opportunities)}件")
+                    for opp in opportunities:
+                        result = self.profitability.calculate_profitability(opp)
+                        if result and result.get("is_profitable"):
+                            self.logger.warning(f"✅ 実行可能機会: ${result['estimated_profit_usd']} | {result['pair']}")
 
                 self.logger.info(f"[{start_time.strftime('%H:%M:%S')}] {len(self.pairs)}ペアを監視完了")
 
@@ -72,11 +66,9 @@ class PriceMonitor:
             self.logger.info("Price monitoring stopped gracefully")
         except Exception as e:
             self.logger.error(f"Monitoring error: {e}")
-            await self.telegram.send_message(f"❌ PriceMonitor エラー: {e}")
         finally:
             self.is_running = False
 
     def stop(self):
-        """監視を停止"""
         self.is_running = False
         self.logger.info("PriceMonitor stopped")

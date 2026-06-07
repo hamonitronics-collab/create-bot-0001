@@ -2,14 +2,14 @@
 # すべてのパラメータをここで管理（要件定義準拠）
 
 bot:
-chain: "arbitrum-sepolia"          # ← テストネットに変更（例）
-  # chain: "arbitrum"                # 本番用（コメントアウト）
+  chain: "arbitrum-sepolia"          # ← テストネットに変更（例）
+   # chain: "arbitrum"                # 本番用（コメントアウト）
   monitoring_interval: 2.0
 
 trading:
-  price_difference_threshold: 0.5      # 価格差閾値 (%). これ以上で機会検知
-  min_profit_usd: 5.0                  # 最低期待利益 (USD)
-  max_slippage: 0.8                    # 許容スリッページ (%)
+  price_difference_threshold: 0.3      # 価格差閾値 (%). これ以上で機会検知
+  min_profit_usd: 0.1                  # 最低期待利益 (USD)
+  max_slippage: 1.0                    # 許容スリッページ (%)
   max_gas_price_gwei: 30               # 最大ガス価格
 
 risk_management:
