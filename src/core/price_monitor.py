@@ -55,27 +55,35 @@ class PriceMonitor:
             self.logger.error(f"PriceMonitor RPC接続エラー: {e}")
 
     def _get_uniswap_price(self, pair: str) -> float:
-        """Uniswap V3から本物の価格を取得"""
+        """Uniswap V3から価格取得（複数fee tier対応）"""
         try:
-            quoter_address = self.w3.to_checksum_address("0x61fFE014bA17989E743c5F6cB21bF9697530B21e")
-            quoter = self.w3.eth.contract(address=quoter_address, abi=self._get_quoter_abi())
+            fees = [500, 3000, 10000]  # 0.05%, 0.3%, 1%
+            for fee in fees:
+                try:
+                    quoter_address = self.w3.to_checksum_address("0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6")
+                    quoter = self.w3.eth.contract(address=quoter_address, abi=self._get_quoter_abi())
 
-            amount_in = self.w3.to_wei(1, 'ether')
+                    amount_in = self.w3.to_wei(1, 'ether')
+                    amount_out = quoter.functions.quoteExactInputSingle(
+                        self.weth, self.usdc, fee, amount_in, 0
+                    ).call()
 
-            amount_out = quoter.functions.quoteExactInputSingle(
-                self.weth, self.usdc, 3000, amount_in, 0
-            ).call()
-
-            price = self.w3.from_wei(amount_out, 'mwei')
-            return round(float(price), 4)
+                    price = self.w3.from_wei(amount_out, 'mwei')
+                    self.logger.info(f"Uniswap V3 ({fee/10000}%) 価格取得成功: {price:.4f}")
+                    return round(float(price), 4)
+                except:
+                    continue
+            raise Exception("すべてのfee tierで失敗")
         except Exception as e:
             self.logger.error(f"Uniswap V3価格取得エラー: {e}")
             return 2500.0
 
     def _get_sushiswap_price(self, pair: str) -> float:
-        """SushiSwapから本物の価格を取得"""
+        """SushiSwapから価格取得"""
         try:
+            # あなたが確認したPairアドレス
             pair_address = self.w3.to_checksum_address("0xf3eb87c1f6020982173c908e7eb31aa66c1f0296")
+
             pair_contract = self.w3.eth.contract(address=pair_address, abi=self._get_pair_abi())
 
             reserves = pair_contract.functions.getReserves().call()
@@ -83,6 +91,7 @@ class PriceMonitor:
             reserve1 = reserves[1]
 
             price = reserve1 / reserve0 if reserve0 > 0 else 2500.0
+            self.logger.info(f"SushiSwap価格取得成功: {price:.4f}")
             return round(float(price), 4)
         except Exception as e:
             self.logger.error(f"SushiSwap価格取得エラー: {e}")
