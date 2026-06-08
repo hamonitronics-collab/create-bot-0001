@@ -12,6 +12,10 @@ rpc:
     # url: "https://arb-sepolia.g.alchemy.com/v2/あなたのAlchemyキー"  # Alchemyを使う場合（高速）
     ws_url: ""   # WebSocket（後で高速化用）
 
+  arbitrum:
+    url: "https://invictus.ambire.com/arbitrum"   # 本番RPC
+    ws_url: ""   # WebSocket（後で高速化用）
+
 trading:
   price_difference_threshold: 0.3      # 価格差閾値 (%). これ以上で機会検知
   min_profit_usd: 0.1                  # 最低期待利益 (USD)
