@@ -1,8 +1,8 @@
 import os
+import time
 from dotenv import load_dotenv
 from typing import Dict, Optional
 from web3 import Web3
-import time
 
 from ..utils.logger import BotLogger
 from ..utils.telegram import TelegramNotifier
@@ -11,7 +11,7 @@ from ..utils.telegram import TelegramNotifier
 class Executor:
     """
     アービトラージ機会を実行するモジュール
-    完全DEX間アービトラージ版（買って→売る2ステップ）
+    完全DEX間アービトラージ版（Approve対応・動的パス切り替え・DryRun保護）
     """
 
     def __init__(self, config: dict, logger: BotLogger, telegram: TelegramNotifier):
@@ -28,33 +28,36 @@ class Executor:
         self.consecutive_failures = 0
         self.max_consecutive_failures = config.get('risk_management', {}).get('stop_on_consecutive_failures', 3)
 
-        self.dry_run = True   # 安全のため一旦True（テスト後Falseに変更）
+        # 🛡️ 安全装置：Trueの時は実際の送金を行わない
+        self.dry_run = True
 
         self.w3 = None
         self.account = None
         self._connect_web3()
 
-        self.router_address = self.w3.to_checksum_address("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45")
+        # トークンアドレス（Mainnet/Arbitrum想定）
         self.weth = self.w3.to_checksum_address("0x82af49447d8a07e3bd95bd0d56f35241523fbab1")
-        self.usdt = self.w3.to_checksum_address("0x1be207f7ae412c6deb0505485a36bfbdbd921d89")
+        self.usdc = self.w3.to_checksum_address("0xaf88d065e77c8cC2239327C5EDb3A432268e5831") # Native USDC
 
-        self.logger.info("Executor initialized (完全DEX間アービトラージ版)")
+        self.logger.info(f"Executor initialized (DryRun: {'ON' if self.dry_run else 'OFF'})")
 
     def _connect_web3(self):
         try:
-            rpc_url = "https://arb1.arbitrum.io/rpc"   # Arbitrum Mainnet公式RPC
+            rpc_url = self.config.get('rpc', {}).get(self.config['bot'].get('chain', 'arbitrum'), {}).get('url', "https://arb1.arbitrum.io/rpc")
             self.w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 15}))
 
             if self.w3.is_connected():
-                self.logger.info(f"✅ Web3接続成功 (Mainnet) | Chain ID: {self.w3.eth.chain_id}")
+                self.logger.info(f"✅ Executor Web3接続成功 | Chain ID: {self.w3.eth.chain_id}")
                 if self.private_key:
                     self.account = self.w3.eth.account.from_key(self.private_key)
                     self.w3.eth.default_account = self.account.address
                     self.logger.info(f"✅ アカウント設定完了: {self.account.address[:10]}...")
+                else:
+                    self.logger.warning("PRIVATE_KEYが設定されていません。実行にはキーが必要です。")
             else:
-                self.logger.error("Web3接続失敗")
+                self.logger.error("Executor Web3接続失敗")
         except Exception as e:
-            self.logger.error(f"Web3接続エラー: {e}")
+            self.logger.error(f"Executor Web3接続エラー: {e}")
 
     def execute(self, opportunity: Dict) -> bool:
         try:
@@ -65,21 +68,24 @@ class Executor:
             sell_dex = opportunity.get('sell_dex')
             pair = opportunity['pair']
 
-            self.logger.critical(f"🚀 完全アービトラージ実行: {buy_dex}で買って → {sell_dex}で売る | {pair}")
+            self.logger.critical(f"🚀 完全アービトラージ開始: {buy_dex} で買い → {sell_dex} で売り | {pair}")
 
-            if not self._check_balance(0.005):
-                return False
+            if self.dry_run:
+                self.logger.warning("⚠️ Dry Runモード有効: トランザクションのシミュレーションのみ行います")
 
-            # 2ステップ実行
-            success1 = self._perform_swap(buy_dex, opportunity, is_buy=True)
+            # 1. 買う（USDC → WETH）
+            success1 = self._perform_swap(buy_dex, pair, is_buy=True)
             if not success1:
+                self.logger.error(f"❌ {buy_dex} での買いに失敗したため、アービトラージを中止します")
                 return False
 
-            success2 = self._perform_swap(sell_dex, opportunity, is_buy=False)
+            # 2. 売る（WETH → USDC）
+            success2 = self._perform_swap(sell_dex, pair, is_buy=False)
             if success2:
                 self.logger.warning(f"✅ 完全アービトラージ完了: {pair}")
                 self.consecutive_failures = 0
                 return True
+
             return False
 
         except Exception as e:
@@ -87,43 +93,95 @@ class Executor:
             self.consecutive_failures += 1
             return False
 
-    def _check_balance(self, min_amount: float) -> bool:
+    def _check_and_approve(self, token_address: str, spender_address: str, amount: int) -> bool:
+        """ルーターに対してトークンの使用許可（Approve）を出す"""
         try:
-            balance = self.w3.eth.get_balance(self.account.address)
-            balance_eth = self.w3.from_wei(balance, 'ether')
-            self.logger.info(f"残高確認: {balance_eth:.4f} ETH")
-            return balance_eth >= min_amount
+            token_contract = self.w3.eth.contract(address=token_address, abi=self._get_erc20_abi())
+
+            # 現在の許可額を確認
+            allowance = token_contract.functions.allowance(self.account.address, spender_address).call()
+
+            if allowance >= amount:
+                self.logger.debug("✅ 十分なApproveが既にされています")
+                return True
+
+            self.logger.info("🔄 Approveトランザクションを送信します...")
+
+            if self.dry_run:
+                self.logger.info(f"🛡️ Dry Run: Approveシミュレーション完了 (Spender: {spender_address})")
+                return True
+
+            # 無限の許可を与える（2**256 - 1）
+            max_amount = 2**256 - 1
+            tx = token_contract.functions.approve(spender_address, max_amount).build_transaction({
+                'from': self.account.address,
+                'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                'maxFeePerGas': self.w3.eth.get_block('latest')['baseFeePerGas'] * 2,
+                'maxPriorityFeePerGas': self.w3.to_wei(1, 'gwei'),
+            })
+
+            signed_tx = self.w3.eth.account.sign_transaction(tx, self.private_key)
+            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+
+            self.logger.info(f"⏳ Approve Tx送信: {tx_hash.hex()}")
+            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
+
+            return receipt.status == 1
+
         except Exception as e:
-            self.logger.warning(f"残高チェック失敗: {e}")
+            self.logger.error(f"Approve失敗: {e}")
             return False
 
-    def _perform_swap(self, dex: str, opportunity: Dict, is_buy: bool) -> bool:
-        """1回のSwap実行（ガス料金強化版）"""
+    def _perform_swap(self, dex_name: str, pair: str, is_buy: bool) -> bool:
+        """1回のSwap実行"""
         try:
-            amount_in = self.w3.to_wei(0.005, 'ether')
+            # 1. 対象DEXのルーターアドレスを config から取得
+            dex_config = self.config.get('dexes', {}).get(dex_name, {})
+            router_address_raw = dex_config.get('router_address')
 
-            router = self.w3.eth.contract(address=self.router_address, abi=self._get_router_abi())
+            if not router_address_raw:
+                self.logger.error(f"{dex_name} のルーターアドレスが設定されていません")
+                return False
 
-            direction = "買う" if is_buy else "売る"
-            self.logger.warning(f"[{dex}] {direction}を実行: {amount_in} WETH → USDT")
+            router_address = self.w3.to_checksum_address(router_address_raw)
+            router = self.w3.eth.contract(address=router_address, abi=self._get_router_abi())
 
-            deadline = int(time.time()) + 600
+            # 2. パスと入金額の決定
+            # 買うとき(USDC→WETH): USDCを支払う / 売るとき(WETH→USDC): WETHを支払う
+            if is_buy:
+                path = [self.usdc, self.weth]
+                amount_in = int(1 * 10**6) # テスト: 1 USDC (decimals=6)
+                token_to_approve = self.usdc
+                direction_text = "USDC → WETH (買い)"
+            else:
+                path = [self.weth, self.usdc]
+                amount_in = self.w3.to_wei(0.001, 'ether') # テスト: 0.001 WETH
+                token_to_approve = self.weth
+                direction_text = "WETH → USDC (売り)"
 
-            # amountOutMin計算
-            price_diff = opportunity.get('price_diff_percent', 0.5)
-            expected_out = int(amount_in * (1 + price_diff / 100) * (1 - self.max_slippage / 100))
+            self.logger.warning(f"[{dex_name}] {direction_text} を準備中...")
 
-            # === ガス料金をより強めに動的設定 ===
+            # 3. ルーターへのApprove確認
+            if not self._check_and_approve(token_to_approve, router_address, amount_in):
+                return False
+
+            # 4. ガス代の設定
             base_fee = self.w3.eth.get_block('latest')['baseFeePerGas']
-            max_priority_fee = self.w3.to_wei(3, 'gwei')   # 少し高めに
+            max_priority_fee = self.w3.to_wei(1, 'gwei')
             max_fee_per_gas = base_fee * 2 + max_priority_fee
 
-            self.logger.info(f"ガス料金設定: baseFee={base_fee}, maxFeePerGas={max_fee_per_gas}")
+            deadline = int(time.time()) + 300 # 5分後
+            expected_out = 0 # 将来的にProfitabilityから正確な amountOutMin を渡す
 
+            if self.dry_run:
+                self.logger.info(f"🛡️ Dry Run: {dex_name} での {direction_text} スワップ成功判定")
+                return True
+
+            # 5. スワップの送信
             tx = router.functions.swapExactTokensForTokens(
                 amount_in,
-                expected_out,
-                [self.weth, self.usdt],
+                expected_out, # ⚠️ スリッページ許容額
+                path,
                 self.account.address,
                 deadline
             ).build_transaction({
@@ -131,22 +189,22 @@ class Executor:
                 'nonce': self.w3.eth.get_transaction_count(self.account.address),
                 'maxFeePerGas': max_fee_per_gas,
                 'maxPriorityFeePerGas': max_priority_fee,
-                'gas': 400000,   # 少し余裕を持たせる
+                'gas': 500000,
             })
 
             signed_tx = self.w3.eth.account.sign_transaction(tx, self.private_key)
             tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
 
-            self.logger.critical(f"✅ {dex} Tx送信完了: {tx_hash.hex()}")
+            self.logger.critical(f"✅ {dex_name} Tx送信完了: {tx_hash.hex()}")
 
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=90)
             status = '成功' if receipt.status == 1 else '失敗'
-            self.logger.warning(f"✅ {dex} トランザクション確認完了! Status: {status}")
+            self.logger.warning(f"🏁 {dex_name} トランザクション結果: {status}")
 
             return receipt.status == 1
 
         except Exception as e:
-            self.logger.error(f"{dex} Swapエラー: {e}")
+            self.logger.error(f"{dex_name} Swapエラー: {e}")
             return False
 
     def _get_router_abi(self):
@@ -163,3 +221,11 @@ class Executor:
             "stateMutability": "nonpayable",
             "type": "function"
         }]
+
+    def _get_erc20_abi(self):
+        """トークンのApproveや残高確認用ABI"""
+        return [
+            {"constant": False, "inputs": [{"name": "spender", "type": "address"}, {"name": "amount", "type": "uint256"}], "name": "approve", "outputs": [{"name": "", "type": "bool"}], "payable": False, "stateMutability": "nonpayable", "type": "function"},
+            {"constant": True, "inputs": [{"name": "owner", "type": "address"}, {"name": "spender", "type": "address"}], "name": "allowance", "outputs": [{"name": "", "type": "uint256"}], "payable": False, "stateMutability": "view", "type": "function"},
+            {"constant": True, "inputs": [{"name": "account", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "payable": False, "stateMutability": "view", "type": "function"}
+        ]
