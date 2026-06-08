@@ -14,7 +14,7 @@ from .executor import Executor
 class PriceMonitor:
     """
     DEXから価格情報を監視するモジュール
-    Mainnet本物価格取得版
+    Mainnet本物価格取得版（PancakeSwapエラー修正対応）
     """
 
     def __init__(self, config: dict, logger: BotLogger, telegram: TelegramNotifier, stop_callback: Callable = None):
@@ -37,15 +37,17 @@ class PriceMonitor:
 
         # トークンアドレス（Mainnet）
         self.weth = self.w3.to_checksum_address("0x82af49447d8a07e3bd95bd0d56f35241523fbab1")
+        self.wbtc = self.w3.to_checksum_address("0x2f2a2543B76A4166549F7aaB2e75Bef0aefc5B0f") # 👈 これを追加
         self.usdc = self.w3.to_checksum_address("0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8")
-        self.usdt = self.w3.to_checksum_address("0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9")
 
-        self.logger.info("PriceMonitor initialized (Mainnet本物価格取得)")
+        # Pancake/Sushi用の新USDC (Native USDC)
+        self.native_usdc = self.w3.to_checksum_address("0xaf88d065e77c8cC2239327C5EDb3A432268e5831")
+
+        self.logger.info("PriceMonitor initialized (Mainnet本物価格取得・Pancake対応版)")
 
     def _connect_rpc(self):
         """Mainnet RPC接続"""
         try:
-            #rpc_url = "https://arb1.arbitrum.io/rpc" #testnet
             rpc_url = "https://invictus.ambire.com/arbitrum"  # Mainnet
             self.w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 10}))
             if self.w3.is_connected():
@@ -56,7 +58,7 @@ class PriceMonitor:
             self.logger.error(f"PriceMonitor RPC接続エラー: {e}")
 
     def _get_uniswap_price(self, pair: str) -> float:
-        """Uniswap V3から価格取得（複数fee tier対応）"""
+        """Uniswap V3から価格取得（失敗時はNoneを返す安全弁付き）"""
         try:
             fees = [500, 3000, 10000]  # 0.05%, 0.3%, 1%
             for fee in fees:
@@ -77,35 +79,19 @@ class PriceMonitor:
             raise Exception("すべてのfee tierで失敗")
         except Exception as e:
             self.logger.error(f"Uniswap V3価格取得エラー: {e}")
-            return 2500.0
+            return None # ⚠️ 安全弁：失敗時は固定値ではなくNoneを返す
 
     def _get_sushiswap_price(self, pair: str) -> float:
-        """SushiSwapから価格取得（V3 QuoterV2構造体対応）"""
+        """SushiSwapから価格取得（失敗時はNoneを返す）"""
         try:
-            # SushiSwap V3 (Arbitrum Mainnet) Quoter
             quoter_address = self.w3.to_checksum_address("0x0524e833ccd057e4d7a296e3aaab9f7675964ce1")
-
-            # Sushi専用の新しいABIを使用
-            quoter = self.w3.eth.contract(address=quoter_address, abi=self._get_sushiswap_quoter_abi())
+            quoter = self.w3.eth.contract(address=quoter_address, abi=self._get_v3_quoter_v2_abi())
             amount_in = self.w3.to_wei(1, 'ether')
-            fees = [500, 3000, 10000] # 0.05%, 0.3%, 1%
-
-            # 使用するUSDCアドレス（引数で動的に渡す場合は適宜変更してください）
-            # ここでは新USDCを指定している前提です
-            target_usdc = self.w3.to_checksum_address("0xaf88d065e77c8cC2239327C5EDb3A432268e5831")
+            fees = [500, 3000, 10000]
 
             for fee in fees:
                 try:
-                    # 引数を一つのタプル(params)として渡す
-                    params = (
-                        self.weth,
-                        target_usdc,
-                        amount_in,
-                        fee,
-                        0 # sqrtPriceLimitX96
-                    )
-
-                    # QuoterV2は複数の値を返すため、[0]でamountOutだけを抽出
+                    params = (self.weth, self.native_usdc, amount_in, fee, 0)
                     outputs = quoter.functions.quoteExactInputSingle(params).call()
                     amount_out = outputs[0]
 
@@ -113,98 +99,93 @@ class PriceMonitor:
                     self.logger.info(f"SushiSwap V3 ({fee/10000}%) 価格取得成功: {price:.4f}")
                     return round(float(price), 4)
                 except Exception as inner_e:
-                    self.logger.debug(f"SushiSwap V3 fee {fee} 取得失敗詳細: {inner_e}")
                     continue
 
             raise Exception("全fee tierでリバート、または流動性がありません")
         except Exception as e:
             self.logger.error(f"SushiSwap価格取得エラー: {e}")
-            return 2500.0
+            return None # ⚠️ 安全弁
 
     def _get_pancakeswap_price(self, pair: str) -> float:
-        """PancakeSwap V3から価格取得"""
+        """PancakeSwap V3から価格取得（引数順序正常化・USDC二段構え版）"""
         try:
-            # Arbitrum Mainnet PancakeSwap V3 Router / Quoter
-            quoter_address = self.w3.to_checksum_address("0x5e09ACf80C0296740eC5d6F643005a4ef8DaA694")
-            quoter = self.w3.eth.contract(address=quoter_address, abi=self._get_quoter_abi())
+            token_in = self.weth
+            # ⚠️ 対策1: ArbitrumのPancakeSwapは旧USDC(USDC.e)に流動性がある場合が多いため、配列にして両方試す
+            tokens_out = [self.native_usdc, self.usdc]
 
-            amount_in = self.w3.to_wei(1, 'ether')
-            fees = [500, 3000, 10000]
+            if "WBTC" in pair:
+                if hasattr(self, 'wbtc'):
+                    token_in = self.wbtc
+                else:
+                    token_in = self.w3.to_checksum_address("0x2f2a2543B76A4166549F7aaB2e75Bef0aefc5B0f")
 
-            for fee in fees:
-                try:
-                    amount_out = quoter.functions.quoteExactInputSingle(
-                        self.weth, self.usdc, fee, amount_in, 0
-                    ).call()
-                    price = self.w3.from_wei(amount_out, 'mwei')
-                    self.logger.info(f"PancakeSwap V3 ({fee/10000}%) 価格取得成功: {price:.4f}")
-                    return round(float(price), 4)
-                except:
-                    continue
-            raise Exception("PancakeSwap全fee tier失敗")
+            quoter_address = self.w3.to_checksum_address("0xB048Bbc1E2Dc36a37e96fA3423A7a196fc9444B2")
+            # ⚠️ 対策2: 正規の構造体ABI（SushiSwapと同じ、amountInが先のもの）に戻す
+            quoter = self.w3.eth.contract(address=quoter_address, abi=self._get_v3_quoter_v2_abi())
+
+            if "WBTC" in pair:
+                amount_in = int(1 * 10**8)
+            else:
+                amount_in = self.w3.to_wei(1, 'ether')
+
+            fees = [100, 500, 2500, 10000]
+
+            # 新USDC → 旧USDC.e の順番で流動性プールを探索する
+            for token_out in tokens_out:
+                for fee in fees:
+                    try:
+                        # ⚠️ 対策3: 正常な順序 (amountIn が3番目、fee が4番目) に修正
+                        params = (
+                            token_in,
+                            token_out,
+                            int(amount_in),   # 3番目: amountIn
+                            int(fee),         # 4番目: fee
+                            0                 # 5番目: sqrtPriceLimitX96
+                        )
+
+                        outputs = quoter.functions.quoteExactInputSingle(params).call()
+
+                        if isinstance(outputs, (list, tuple)):
+                            amount_out = outputs[0]
+                        else:
+                            amount_out = outputs
+
+                        price_raw = self.w3.from_wei(amount_out, 'mwei')
+                        price = float(price_raw)
+
+                        # どちらのUSDCで取得できたかログに出力する
+                        usdc_type = "Native" if token_out == self.native_usdc else "USDC.e"
+                        self.logger.info(f"PancakeSwap V3 ({fee/10000}%) [{pair}] 価格取得成功 ({usdc_type}): {price:.4f}")
+                        return round(price, 4)
+
+                    except Exception as inner_e:
+                        continue
+
+            raise Exception(f"PancakeSwap全fee tier・全USDC失敗、または流動性がありません ({pair})")
         except Exception as e:
             self.logger.error(f"PancakeSwap価格取得エラー: {e}")
-            return 2500.0
-
-    def _get_quoter_abi(self):
-        return [{
-            "inputs": [
-                {"name": "tokenIn", "type": "address"},
-                {"name": "tokenOut", "type": "address"},
-                {"name": "fee", "type": "uint24"},
-                {"name": "amountIn", "type": "uint256"},
-                {"name": "sqrtPriceLimitX96", "type": "uint160"}
-            ],
-            "name": "quoteExactInputSingle",
-            "outputs": [{"name": "amountOut", "type": "uint256"}],
-            "stateMutability": "view",
-            "type": "function"
-        }]
-
-    def _get_pair_abi(self):
-        return [{
-            "constant": True,
-            "inputs": [],
-            "name": "getReserves",
-            "outputs": [
-                {"name": "_reserve0", "type": "uint112"},
-                {"name": "_reserve1", "type": "uint112"},
-                {"name": "_blockTimestampLast", "type": "uint32"}
-            ],
-            "payable": False,
-            "stateMutability": "view",
-            "type": "function"
-        }]
+            return None
 
     async def get_prices(self) -> Dict[str, Dict[str, float]]:
-        """3DEX (Uniswap V3, SushiSwap, PancakeSwap) の本物価格取得"""
+        """3DEXの価格取得"""
         prices = {}
         for pair in self.pairs:
-            try:
-                uniswap_price = self._get_uniswap_price(pair)
-                sushiswap_price = self._get_sushiswap_price(pair)
-                pancakeswap_price = self._get_pancakeswap_price(pair)
+            uniswap_price = self._get_uniswap_price(pair)
+            sushiswap_price = self._get_sushiswap_price(pair)
+            pancakeswap_price = self._get_pancakeswap_price(pair)
 
-                prices[pair] = {
-                    "uniswap_v3": uniswap_price,
-                    "sushiswap": sushiswap_price,
-                    "pancakeswap": pancakeswap_price,
-                }
-            except Exception as e:
-                self.logger.error(f"価格取得エラー {pair}: {e}")
-                base_price = 2500.0
-                prices[pair] = {
-                    "uniswap_v3": base_price,
-                    "sushiswap": base_price,
-                    "pancakeswap": base_price,
-                }
+            # Noneを弾くフィルター用の辞書を構築
+            dex_data = {}
+            if uniswap_price is not None: dex_data["uniswap_v3"] = uniswap_price
+            if sushiswap_price is not None: dex_data["sushiswap"] = sushiswap_price
+            if pancakeswap_price is not None: dex_data["pancakeswap"] = pancakeswap_price
 
-        self.logger.debug(f"3DEX価格取得: {prices}")
+            prices[pair] = dex_data
+
+        self.logger.debug(f"3DEX価格取得結果: {prices}")
         return prices
 
-    # start_monitoring と stop メソッドは変更なし（以前のものを使用）
     async def start_monitoring(self):
-        # （省略せず以前の完全版を使用してください）
         self.is_running = True
         self.logger.info("Price monitoring started (Mainnet 本物価格取得)")
         await self.telegram.send_message("🟢 PriceMonitor started (Mainnet)")
@@ -226,7 +207,6 @@ class PriceMonitor:
                                 self.logger.warning(f"🎯 Executorが処理完了: {result['pair']}")
 
                 self.logger.info(f"[{start_time.strftime('%H:%M:%S')}] {len(self.pairs)}ペアを監視完了")
-
                 await asyncio.sleep(self.monitoring_interval)
 
         except asyncio.CancelledError:
@@ -244,7 +224,24 @@ class PriceMonitor:
         if self.stop_callback:
             self.stop_callback()
 
-    def _get_sushiswap_quoter_abi(self):
+    def _get_quoter_abi(self):
+        """Uniswap V3 等の旧Quoter(フラット引数用) ABI"""
+        return [{
+            "inputs": [
+                {"name": "tokenIn", "type": "address"},
+                {"name": "tokenOut", "type": "address"},
+                {"name": "fee", "type": "uint24"},
+                {"name": "amountIn", "type": "uint256"},
+                {"name": "sqrtPriceLimitX96", "type": "uint160"}
+            ],
+            "name": "quoteExactInputSingle",
+            "outputs": [{"name": "amountOut", "type": "uint256"}],
+            "stateMutability": "view",
+            "type": "function"
+        }]
+
+    def _get_v3_quoter_v2_abi(self):
+        """SushiSwap / PancakeSwap V3 等のQuoterV2(構造体引数用) ABI"""
         return [{
             "inputs": [{
                 "components": [
@@ -267,3 +264,4 @@ class PriceMonitor:
             "stateMutability": "view",
             "type": "function"
         }]
+
