@@ -11,7 +11,7 @@ from ..utils.telegram import TelegramNotifier
 class Executor:
     """
     アービトラージ機会を実行するモジュール
-    Approve + Swap完全修正版
+    WETH → USDT版（ロジックはそのまま）
     """
 
     def __init__(self, config: dict, logger: BotLogger, telegram: TelegramNotifier):
@@ -36,9 +36,9 @@ class Executor:
 
         self.router_address = self.w3.to_checksum_address("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45")
         self.weth = self.w3.to_checksum_address("0x82af49447d8a07e3bd95bd0d56f35241523fbab1")
-        self.usdc = self.w3.to_checksum_address("0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8")
+        self.usdt = self.w3.to_checksum_address("0x1be207f7ae412c6deb0505485a36bfbdbd921d89")  # Arbitrum Sepolia USDT
 
-        self.logger.info("Executor initialized (Swapロジック修正済み)")
+        self.logger.info("Executor initialized (WETH → USDT版)")
 
     def _connect_web3(self):
         try:
@@ -64,7 +64,7 @@ class Executor:
             if not self._check_balance(0.005):
                 return False
 
-            success = self._perform_approve_and_swap(opportunity)
+            success = self._perform_swap(opportunity)
 
             if success:
                 self.logger.warning(f"✅ 本物取引送信完了: {pair}")
@@ -87,38 +87,25 @@ class Executor:
             self.logger.warning(f"残高チェック失敗: {e}")
             return False
 
-    def _perform_approve_and_swap(self, opportunity: Dict) -> bool:
-        """Approve + Swapの本物実行（QuoterでamountOutMin計算）"""
+    def _perform_swap(self, opportunity: Dict) -> bool:
+        """WETH → USDT Swap（amountOutMin改善）"""
         try:
             amount_in = self.w3.to_wei(0.005, 'ether')
 
-            # Quoterで正確な見積もり取得
-            quoter_address = self.w3.to_checksum_address("0x2779a0CC1c3e0E44D2542EC3e79e3864Ae93Ef0B")
-            quoter = self.w3.eth.contract(address=quoter_address, abi=self._get_quoter_abi())
-
-            self.logger.warning("Quoterで見積もり計算中...")
-            quoted_amount_out = quoter.functions.quoteExactInputSingle(
-                self.weth,
-                self.usdc,
-                3000,          # 0.3% fee
-                amount_in,
-                0
-            ).call()
-
-            # スリッページ考慮（max_slippage = 0.5%）
-            amount_out_min = int(quoted_amount_out * (1 - self.max_slippage / 100))
-
-            self.logger.info(f"Quoter見積もり: {self.w3.from_wei(quoted_amount_out, 'mwei'):.4f} USDC → amountOutMin: {self.w3.from_wei(amount_out_min, 'mwei'):.4f} USDC")
-
-            # RouterでSwap実行
             router = self.w3.eth.contract(address=self.router_address, abi=self._get_router_abi())
+
+            self.logger.warning(f"Swapを実行します: {amount_in} WETH → USDT")
 
             deadline = int(time.time()) + 600
 
+            # amountOutMinを価格差から簡易計算
+            price_diff = opportunity.get('price_diff_percent', 0.5)
+            expected_out = int(amount_in * (1 + price_diff / 100) * (1 - self.max_slippage / 100))
+
             tx = router.functions.swapExactTokensForTokens(
                 amount_in,
-                amount_out_min,        # ← ここが重要（Quoterで計算）
-                [self.weth, self.usdc],
+                expected_out,
+                [self.weth, self.usdt],   # ← USDTに変更
                 self.account.address,
                 deadline
             ).build_transaction({
@@ -134,7 +121,8 @@ class Executor:
             self.logger.critical(f"✅ トランザクション送信完了! Tx Hash: {tx_hash.hex()}")
 
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=90)
-            self.logger.warning(f"✅ トランザクション確認完了! Status: {'成功' if receipt.status == 1 else '失敗'}")
+            status = '成功' if receipt.status == 1 else '失敗'
+            self.logger.warning(f"✅ トランザクション確認完了! Status: {status}")
 
             return receipt.status == 1
 
