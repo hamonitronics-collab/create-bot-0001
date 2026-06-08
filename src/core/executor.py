@@ -88,26 +88,36 @@ class Executor:
             return False
 
     def _perform_approve_and_swap(self, opportunity: Dict) -> bool:
-        """Approve + Swapの本物実行（修正版）"""
+        """Approve + Swapの本物実行（QuoterでamountOutMin計算）"""
         try:
             amount_in = self.w3.to_wei(0.005, 'ether')
 
-            # Router
+            # Quoterで正確な見積もり取得
+            quoter_address = self.w3.to_checksum_address("0x2779a0CC1c3e0E44D2542EC3e79e3864Ae93Ef0B")
+            quoter = self.w3.eth.contract(address=quoter_address, abi=self._get_quoter_abi())
+
+            self.logger.warning("Quoterで見積もり計算中...")
+            quoted_amount_out = quoter.functions.quoteExactInputSingle(
+                self.weth,
+                self.usdc,
+                3000,          # 0.3% fee
+                amount_in,
+                0
+            ).call()
+
+            # スリッページ考慮（max_slippage = 0.5%）
+            amount_out_min = int(quoted_amount_out * (1 - self.max_slippage / 100))
+
+            self.logger.info(f"Quoter見積もり: {self.w3.from_wei(quoted_amount_out, 'mwei'):.4f} USDC → amountOutMin: {self.w3.from_wei(amount_out_min, 'mwei'):.4f} USDC")
+
+            # RouterでSwap実行
             router = self.w3.eth.contract(address=self.router_address, abi=self._get_router_abi())
-
-            # 1. Approve
-            self.logger.warning("1. Approveを実行します...")
-            # WETHはネイティブ扱いに近いため簡易スキップ（必要に応じて完全実装）
-
-            # 2. Swap
-            self.logger.warning(f"2. Swapを実行します: {amount_in} WETH → USDC")
 
             deadline = int(time.time()) + 600
 
-            # amountOutMinを0に（テスト用。実運用ではQuoterで計算）
             tx = router.functions.swapExactTokensForTokens(
                 amount_in,
-                0,  # amountOutMin (テスト用)
+                amount_out_min,        # ← ここが重要（Quoterで計算）
                 [self.weth, self.usdc],
                 self.account.address,
                 deadline
