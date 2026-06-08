@@ -172,13 +172,13 @@ class PriceMonitor:
         for pair in self.pairs:
             uniswap_price = self._get_uniswap_price(pair)
             sushiswap_price = self._get_sushiswap_price(pair)
-            pancakeswap_price = self._get_pancakeswap_price(pair)
+            #pancakeswap_price = self._get_pancakeswap_price(pair)
 
             # Noneを弾くフィルター用の辞書を構築
             dex_data = {}
             if uniswap_price is not None: dex_data["uniswap_v3"] = uniswap_price
             if sushiswap_price is not None: dex_data["sushiswap"] = sushiswap_price
-            if pancakeswap_price is not None: dex_data["pancakeswap"] = pancakeswap_price
+           # if pancakeswap_price is not None: dex_data["pancakeswap"] = pancakeswap_price
 
             prices[pair] = dex_data
 

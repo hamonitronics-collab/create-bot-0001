@@ -21,6 +21,7 @@ trading:
   min_profit_usd: 0.1                  # 最低期待利益 (USD)
   max_slippage: 1.0                    # 許容スリッページ (%)
   max_gas_price_gwei: 30               # 最大ガス価格
+  trade_amount_usd: 100.0              # 👈 NEW: 1回のスワップで動かす金額 (USD)
 
 risk_management:
   max_drawdown_percent: 20.0           # 許容ドローダウン率 (%)
