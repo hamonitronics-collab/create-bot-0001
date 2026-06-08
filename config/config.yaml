@@ -29,9 +29,10 @@ pairs:
 
 dexes:
   uniswap_v3:
-    quoter_address: "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"  # Arbitrum Sepolia QuoterV2
+    quoter_address: "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"  # Arbitrum Sepolia QuoterV2
     router_address: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"
   sushiswap:
+    quoter_address: "0x9c6522117e2ed1fE5bdb72bb0cd5E3b9c3f6e6f9"  # Arbitrum Mainnet SushiSwap V3 Quoter
     router_address: "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506"
 
 telegram:

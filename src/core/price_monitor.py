@@ -79,20 +79,29 @@ class PriceMonitor:
             return 2500.0
 
     def _get_sushiswap_price(self, pair: str) -> float:
-        """SushiSwapから価格取得"""
+        """SushiSwapから価格取得（V3 fee tier対応）"""
         try:
-            # あなたが確認したPairアドレス
-            pair_address = self.w3.to_checksum_address("0xf3eb87c1f6020982173c908e7eb31aa66c1f0296")
+            # SushiSwap V3 Quoterアドレス (Arbitrum Mainnet)
+            quoter_address = self.w3.to_checksum_address("0x9c6522117e2ed1fE5bdb72bb0cd5E3b9c3f6e6f9")  # Sushi V3 Quoter
 
-            pair_contract = self.w3.eth.contract(address=pair_address, abi=self._get_pair_abi())
+            quoter = self.w3.eth.contract(address=quoter_address, abi=self._get_quoter_abi())
 
-            reserves = pair_contract.functions.getReserves().call()
-            reserve0 = reserves[0]
-            reserve1 = reserves[1]
+            amount_in = self.w3.to_wei(1, 'ether')
+            fees = [500, 3000, 10000]  # 0.05%, 0.3%, 1%
 
-            price = reserve1 / reserve0 if reserve0 > 0 else 2500.0
-            self.logger.info(f"SushiSwap価格取得成功: {price:.4f}")
-            return round(float(price), 4)
+            for fee in fees:
+                try:
+                    amount_out = quoter.functions.quoteExactInputSingle(
+                        self.weth, self.usdc, fee, amount_in, 0
+                    ).call()
+
+                    price = self.w3.from_wei(amount_out, 'mwei')
+                    self.logger.info(f"SushiSwap V3 ({fee/10000}%) 価格取得成功: {price:.4f}")
+                    return round(float(price), 4)
+                except:
+                    continue  # 次のfee tierを試す
+
+            raise Exception("全fee tier失敗")
         except Exception as e:
             self.logger.error(f"SushiSwap価格取得エラー: {e}")
             return 2500.0
