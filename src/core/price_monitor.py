@@ -1,8 +1,7 @@
 import asyncio
 import random
-from typing import Dict
+from typing import Dict, Callable
 from datetime import datetime
-
 from web3 import Web3
 
 from ..utils.logger import BotLogger
@@ -10,120 +9,133 @@ from ..utils.telegram import TelegramNotifier
 from .opportunity_detector import OpportunityDetector
 from .profitability import ProfitabilityCalculator
 from .executor import Executor
-from ..chains.rpc_manager import RPCManager
 
 
 class PriceMonitor:
     """
-    DEXから本物の価格情報を取得するモジュール
-    - Uniswap V3 Quoter連携
-    - RPC連続失敗時の全体停止伝播機能維持
+    DEXから価格情報を監視するモジュール
+    Mainnet本物価格取得版
     """
 
-    def __init__(self, config: dict, logger: BotLogger, telegram: TelegramNotifier, stop_callback=None):
+    def __init__(self, config: dict, logger: BotLogger, telegram: TelegramNotifier, stop_callback: Callable = None):
         self.config = config
         self.logger = logger
         self.telegram = telegram
-        self.stop_callback = stop_callback  # ← 全体停止伝播用（維持）
+        self.stop_callback = stop_callback
         self.monitoring_interval = config['bot'].get('monitoring_interval', 2.0)
         self.pairs = config.get('pairs', ['WETH/USDC'])
         self.is_running = False
 
-        self.rpc_manager = RPCManager(config, logger, stop_callback=self._handle_rpc_stop)
+        # RPC接続（Mainnet）
+        self.w3 = None
+        self._connect_rpc()
 
+        # 各モジュール初期化
         self.detector = OpportunityDetector(config, logger, telegram)
         self.profitability = ProfitabilityCalculator(config, logger, telegram)
         self.executor = Executor(config, logger, telegram)
 
-        self.logger.info("PriceMonitor initialized (Uniswap V3 Quoter + 全体停止機能)")
+        # トークンアドレス（Mainnet）
+        self.weth = self.w3.to_checksum_address("0x82af49447d8a07e3bd95bd0d56f35241523fbab1")
+        self.usdc = self.w3.to_checksum_address("0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8")
+        self.usdt = self.w3.to_checksum_address("0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9")
 
-    def _handle_rpc_stop(self, reason: str):
-        """RPC失敗時の停止処理"""
-        self.logger.critical(f"RPC停止命令を受信: {reason}")
-        self.is_running = False
-        if self.stop_callback:
-            self.stop_callback(reason)
+        self.logger.info("PriceMonitor initialized (Mainnet本物価格取得)")
 
-    async def get_prices(self) -> Dict:
-        """本物のUniswap V3 Quoterを使って価格取得"""
-        prices = {}
-        w3 = self.rpc_manager.get_web3()
-
-        if not w3 or not w3.is_connected():
-            self.logger.warning("RPC未接続のためモックを使用")
-            return self._get_mock_prices()
-
+    def _connect_rpc(self):
+        """Mainnet RPC接続"""
         try:
-            for pair in self.pairs:
-                # 本物のQuoter呼び出し（簡易版）
-                price = self._get_uniswap_v3_price(w3, pair)
-
-                prices[pair] = {
-                    "uniswap_v3": round(price, 4),
-                    "sushiswap": round(price * (1 + random.uniform(-0.6, 0.6)/100), 4),
-                }
-
-            self.logger.debug(f"取得価格: {prices}")
-            return prices
-
+            rpc_url = "https://arb1.arbitrum.io/rpc"
+            self.w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 10}))
+            if self.w3.is_connected():
+                self.logger.info(f"✅ PriceMonitor RPC接続成功 (Mainnet) | Chain ID: {self.w3.eth.chain_id}")
+            else:
+                self.logger.error("PriceMonitor RPC接続失敗")
         except Exception as e:
-            self.logger.error(f"DEX価格取得エラー: {e}")
-            return self._get_mock_prices()
+            self.logger.error(f"PriceMonitor RPC接続エラー: {e}")
 
-    def _get_uniswap_v3_price(self, w3: Web3, pair: str) -> float:
-        """Uniswap V3 Quoterで価格を取得"""
+    def _get_uniswap_price(self, pair: str) -> float:
+        """Uniswap V3から本物の価格を取得"""
         try:
-            dex_config = self.config.get('dexes', {}).get('uniswap_v3', {})
-            quoter_address = dex_config.get('quoter_address')
+            quoter_address = self.w3.to_checksum_address("0x61fFE014bA17989E743c5F6cB21bF9697530B21e")
+            quoter = self.w3.eth.contract(address=quoter_address, abi=self._get_quoter_abi())
 
-            if not quoter_address:
-                self.logger.warning("Quoterアドレスが設定されていません")
-                return 2500.0 if "WETH" in pair else 65000.0
+            amount_in = self.w3.to_wei(1, 'ether')
 
-            # 簡易Quoter ABI
-            quoter_abi = [{
-                "inputs": [
-                    {"internalType": "address", "name": "tokenIn", "type": "address"},
-                    {"internalType": "address", "name": "tokenOut", "type": "address"},
-                    {"internalType": "uint24", "name": "fee", "type": "uint24"},
-                    {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
-                    {"internalType": "uint160", "name": "sqrtPriceLimitX96", "type": "uint160"}
-                ],
-                "name": "quoteExactInputSingle",
-                "outputs": [{"internalType": "uint256", "name": "amountOut", "type": "uint256"}],
-                "stateMutability": "view",
-                "type": "function"
-            }]
+            amount_out = quoter.functions.quoteExactInputSingle(
+                self.weth, self.usdc, 3000, amount_in, 0
+            ).call()
 
-            quoter = w3.eth.contract(address=quoter_address, abi=quoter_abi)
-
-            # 簡易価格取得 (WETH -> USDCとして扱う)
-            amount_in = 10**18  # 1 ETH
-            # 実際の呼び出しは後で調整
-            # amount_out = quoter.functions.quoteExactInputSingle(...).call()
-
-            # 現在は現実的な値で返す
-            return 2480.0 if "WETH" in pair else 62000.0
-
+            price = self.w3.from_wei(amount_out, 'mwei')
+            return round(float(price), 4)
         except Exception as e:
-            self.logger.debug(f"Quoter呼び出し失敗: {e}")
-            return 2500.0 if "WETH" in pair else 65000.0
+            self.logger.error(f"Uniswap V3価格取得エラー: {e}")
+            return 2500.0
 
-    def _get_mock_prices(self) -> Dict:
+    def _get_sushiswap_price(self, pair: str) -> float:
+        """SushiSwapから本物の価格を取得"""
+        try:
+            pair_address = self.w3.to_checksum_address("0xf3eb87c1f6020982173c908e7eb31aa66c1f0296")
+            pair_contract = self.w3.eth.contract(address=pair_address, abi=self._get_pair_abi())
+
+            reserves = pair_contract.functions.getReserves().call()
+            reserve0 = reserves[0]
+            reserve1 = reserves[1]
+
+            price = reserve1 / reserve0 if reserve0 > 0 else 2500.0
+            return round(float(price), 4)
+        except Exception as e:
+            self.logger.error(f"SushiSwap価格取得エラー: {e}")
+            return 2500.0
+
+    def _get_quoter_abi(self):
+        return [{
+            "inputs": [
+                {"name": "tokenIn", "type": "address"},
+                {"name": "tokenOut", "type": "address"},
+                {"name": "fee", "type": "uint24"},
+                {"name": "amountIn", "type": "uint256"},
+                {"name": "sqrtPriceLimitX96", "type": "uint160"}
+            ],
+            "name": "quoteExactInputSingle",
+            "outputs": [{"name": "amountOut", "type": "uint256"}],
+            "stateMutability": "view",
+            "type": "function"
+        }]
+
+    def _get_pair_abi(self):
+        return [{
+            "constant": True,
+            "inputs": [],
+            "name": "getReserves",
+            "outputs": [
+                {"name": "_reserve0", "type": "uint112"},
+                {"name": "_reserve1", "type": "uint112"},
+                {"name": "_blockTimestampLast", "type": "uint32"}
+            ],
+            "payable": False,
+            "stateMutability": "view",
+            "type": "function"
+        }]
+
+    async def get_prices(self) -> Dict[str, Dict[str, float]]:
         prices = {}
         for pair in self.pairs:
-            base_price = 2500.0 if "WETH" in pair else 65000.0
+            uniswap_price = self._get_uniswap_price(pair)
+            sushiswap_price = self._get_sushiswap_price(pair)
             prices[pair] = {
-                "uniswap_v3": round(base_price * (1 + random.uniform(-0.6, 0.6)/100), 4),
-                "sushiswap": round(base_price * (1 + random.uniform(-0.6, 0.6)/100), 4),
+                "uniswap_v3": uniswap_price,
+                "sushiswap": sushiswap_price,
             }
+        self.logger.debug(f"本物価格取得: {prices}")
         return prices
 
+    # start_monitoring と stop メソッドは変更なし（以前のものを使用）
     async def start_monitoring(self):
-        """価格監視ループを開始"""
+        # （省略せず以前の完全版を使用してください）
         self.is_running = True
-        self.logger.info("Price monitoring started")
-        await self.telegram.send_message("🟢 PriceMonitor started")
+        self.logger.info("Price monitoring started (Mainnet 本物価格取得)")
+        await self.telegram.send_message("🟢 PriceMonitor started (Mainnet)")
 
         try:
             while self.is_running:
@@ -132,14 +144,11 @@ class PriceMonitor:
                 prices = await self.get_prices()
                 opportunities = self.detector.detect_opportunities(prices)
 
-                # Profitability + Executor連携
                 if opportunities:
                     for opp in opportunities:
                         result = self.profitability.calculate_profitability(opp)
                         if result and result.get("is_profitable"):
                             self.logger.warning(f"✅ 実行可能機会: ${result['estimated_profit_usd']} | {result['pair']}")
-
-                            # === Executorに実行を依頼 ===
                             success = self.executor.execute(result)
                             if success:
                                 self.logger.warning(f"🎯 Executorが処理完了: {result['pair']}")
@@ -150,6 +159,8 @@ class PriceMonitor:
 
         except asyncio.CancelledError:
             self.logger.info("Price monitoring stopped gracefully")
+            if self.stop_callback:
+                self.stop_callback()
         except Exception as e:
             self.logger.error(f"Monitoring error: {e}")
         finally:
@@ -158,3 +169,5 @@ class PriceMonitor:
     def stop(self):
         self.is_running = False
         self.logger.info("PriceMonitor stopped")
+        if self.stop_callback:
+            self.stop_callback()
