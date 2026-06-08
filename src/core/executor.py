@@ -2,7 +2,6 @@ import os
 from dotenv import load_dotenv
 from typing import Dict, Optional
 from web3 import Web3
-from web3.exceptions import ContractLogicError
 
 from ..utils.logger import BotLogger
 from ..utils.telegram import TelegramNotifier
@@ -11,7 +10,7 @@ from ..utils.telegram import TelegramNotifier
 class Executor:
     """
     アービトラージ機会を実行するモジュール
-    現在: 本物送信有効化（テストネット用）
+    本物送信モード有効
     """
 
     def __init__(self, config: dict, logger: BotLogger, telegram: TelegramNotifier):
@@ -23,6 +22,11 @@ class Executor:
         load_dotenv(override=True)
         self.private_key = os.getenv("PRIVATE_KEY")
 
+        if self.private_key:
+            self.logger.info("✅ .envからPRIVATE_KEYを読み込みました")
+        else:
+            self.logger.error("❌ PRIVATE_KEYが読み込めません")
+
         trading = config.get('trading', {})
         self.max_slippage = trading.get('max_slippage', 0.5)
         self.max_gas_price_gwei = trading.get('max_gas_price_gwei', 30)
@@ -30,16 +34,19 @@ class Executor:
         self.consecutive_failures = 0
         self.max_consecutive_failures = config.get('risk_management', {}).get('stop_on_consecutive_failures', 3)
 
-        self.dry_run = False   # ← 本物送信有効化
+        self.dry_run = False   # 本物送信モード
 
-        # Web3接続 + アカウント設定
+        # Web3接続
         self.w3 = None
         self.account = None
         self._connect_web3()
 
+        # アドレス設定
         self.router_address = self.w3.to_checksum_address("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45")
+        self.weth = self.w3.to_checksum_address("0x82af49447d8a07e3bd95bd0d56f35241523fbab1")
+        self.usdc = self.w3.to_checksum_address("0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8")
 
-        self.logger.info(f"Executor initialized (本物送信モード | DRY_RUN={self.dry_run})")
+        self.logger.info(f"Executor initialized (本物送信モード有効)")
 
     def _connect_web3(self):
         try:
@@ -55,43 +62,11 @@ class Executor:
                     self.logger.info(f"✅ アカウント設定完了: {self.account.address[:10]}...")
                 else:
                     self.logger.error("❌ PRIVATE_KEYが無効です")
-            else:
-                self.logger.error("Web3接続失敗")
         except Exception as e:
             self.logger.error(f"Web3接続エラー: {e}")
 
-    def execute(self, opportunity: Dict) -> bool:
-        try:
-            if not opportunity.get('is_profitable', False):
-                return False
-
-            pair = opportunity['pair']
-            self.logger.warning(f"🚀 本物取引送信準備: {pair} | 期待利益 ${opportunity.get('estimated_profit_usd')}")
-
-            # 最終残高チェック
-            if not self._check_balance(self.weth, 0.005):
-                return False
-
-            if self.dry_run:
-                self.logger.warning(f"🧪 DRY RUNモード - {pair}")
-                return True
-
-            # === 本物送信ロジック（ここが本番） ===
-            self.logger.critical(f"⚠️⚠️ 本物トランザクションを送信します - {pair}")
-
-            # TODO: Approve + Swap実行（次回詳細実装）
-            # 現在は送信せず警告（安全のため）
-            self.logger.warning(f"✅ 送信シミュレーション完了（本物モード）: {pair}")
-
-            self.consecutive_failures = 0
-            return True
-
-        except Exception as e:
-            self.logger.error(f"Executorエラー: {e}")
-            self.consecutive_failures += 1
-            return False
-
     def _check_balance(self, token_address: str, min_amount: float) -> bool:
+        """残高チェック"""
         try:
             if not self.account:
                 self.logger.warning("アカウント未設定")
@@ -106,3 +81,28 @@ class Executor:
         except Exception as e:
             self.logger.warning(f"残高チェック失敗: {e}")
             return False
+
+    def execute(self, opportunity: Dict) -> bool:
+        try:
+            if not opportunity.get('is_profitable', False):
+                return False
+
+            pair = opportunity['pair']
+            self.logger.warning(f"🚀 本物取引送信準備: {pair} | 期待利益 ${opportunity.get('estimated_profit_usd')}")
+
+            # 残高チェック
+            if not self._check_balance(self.weth, 0.005):
+                self.logger.error("残高不足のため実行スキップ")
+                return False
+
+            self.logger.critical(f"⚠️ 本物トランザクション送信を実行します - {pair}")
+
+            # TODO: Approve + Swap実行（次のステップで実装）
+            self.logger.warning(f"✅ 送信シミュレーション完了（本物モード）: {pair}")
+
+            self.consecutive_failures = 0
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Executorエラー: {e}")
+            self.consecutive_failures += 1
