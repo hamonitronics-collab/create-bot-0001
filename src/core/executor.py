@@ -36,7 +36,7 @@ class Executor:
     def _connect_web3(self):
         try:
             rpc_url = self.config.get('rpc', {}).get(self.config['bot'].get('chain', 'arbitrum'), {}).get('url', "https://arb1.arbitrum.io/rpc")
-            self.w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 15}))
+            self.w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 5}))
             if self.w3.is_connected() and self.private_key:
                 self.account = self.w3.eth.account.from_key(self.private_key)
                 self.w3.eth.default_account = self.account.address

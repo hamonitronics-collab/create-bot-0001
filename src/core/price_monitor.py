@@ -46,12 +46,16 @@ class PriceMonitor:
 
     def _connect_rpc(self):
         try:
-            # configの構造に合わせて修正
             chain = self.config['bot']['chain']
             rpc_url = self.config['rpc'][chain]['url']
-            self.w3 = Web3(Web3.HTTPProvider(rpc_url))
+            # 💡 タイムアウト設定を追加！
+            self.w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 5}))
+
+            # 接続確認を厳密にする
             if self.w3.is_connected():
                 self.logger.info(f"✅ PriceMonitor RPC接続成功 | Chain ID: {self.w3.eth.chain_id}")
+            else:
+                self.logger.error("RPC接続失敗")
         except Exception as e:
             self.logger.error(f"RPC接続エラー: {e}")
 
