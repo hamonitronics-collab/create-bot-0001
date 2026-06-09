@@ -79,13 +79,20 @@ class Executor:
             self.logger.error("❌ コントラクトが初期化されていないため、実行をスキップします。")
             return
 
-        opp = opportunity_calc.get("opportunity", {})
+        # 💡 修正：送られてきた辞書データをそのまま opp として扱う！（保険の get も追加）
+        opp = opportunity_calc.get("opportunity", opportunity_calc)
         pair = opp.get("pair", "")
+
+        # 💡 安全対策：もし pair が空だったり "/" が無い変なデータならここで弾く
+        if not pair or "/" not in pair:
+            self.logger.error(f"❌ ペア情報が正しく取得できませんでした。実行をスキップします: {opp}")
+            return
 
         # トークン情報の抽出
         base_sym, quote_sym = pair.split("/")
         tokens_config = self.config.get('tokens', {})
 
+        # --- (これ以降の config 読み込みやトランザクション処理はそのまま変更なし！) ---
         if quote_sym not in tokens_config or base_sym not in tokens_config:
             self.logger.error(f"❌ トークン設定が config に不足しています: {pair}")
             return

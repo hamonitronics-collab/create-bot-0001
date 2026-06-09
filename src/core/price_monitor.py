@@ -142,12 +142,23 @@ class PriceMonitor:
             if prices:
                 opportunities = self.detector.detect_opportunities(prices)
                 if opportunities:
-                    for opp in opportunities:
-                        def process_opportunity(opportunity_data):
-                            calc = self.profitability.calculate_profitability(opportunity_data)
-                            if calc and calc.get("is_profitable"):
-                                self.executor.execute(calc)
+                    self.logger.warning(f"検知された機会: {len(opportunities)}件")
 
-                        # 裏側で計算・実行させる（メインループは絶対に止めない）
-                        await asyncio.to_thread(process_opportunity, opp)
+                    for opp in opportunities:
+                        # 💡 修正：非同期関数の中で安全に「辞書データ」から各要素を掘り出して処理する
+                        async def process_opportunity_async(opportunity_data):
+                            try:
+                                # 1. 収益性の計算
+                                calc = self.profitability.calculate_profitability(opportunity_data)
+
+                                # 2. 利益が出るなら実行エンジンを叩く
+                                if calc and calc.get("is_profitable"):
+                                    # 🚀 ここでExecutorの非同期処理を完璧に呼び出します！
+                                    await self.executor.execute(calc)
+                            except Exception as e:
+                                self.logger.error(f"❌ 機会処理中にエラーが発生: {e}")
+
+                        # メインループを邪魔させずにタスクを即時射出
+                        asyncio.create_task(process_opportunity_async(opp))
+
             await asyncio.sleep(self.monitoring_interval)
