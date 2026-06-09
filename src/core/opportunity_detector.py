@@ -1,6 +1,5 @@
-import asyncio
-from typing import Dict, List, Optional
-from datetime import datetime
+import logging
+from typing import List, Dict
 
 from ..utils.logger import BotLogger
 from ..utils.telegram import TelegramNotifier
@@ -8,8 +7,8 @@ from ..utils.telegram import TelegramNotifier
 
 class OpportunityDetector:
     """
-    価格差を検知してアービトラージ機会を見つけるモジュール
-    要件定義: price_difference_threshold を使用
+    価格情報からアービトラージ機会を検知するモジュール
+    DEXアダプター構造・生価格引き渡し対応版
     """
 
     def __init__(self, config: dict, logger: BotLogger, telegram: TelegramNotifier):
@@ -17,48 +16,64 @@ class OpportunityDetector:
         self.logger = logger
         self.telegram = telegram
 
-        trading_config = config.get('trading', {})
-        self.price_difference_threshold = trading_config.get('price_difference_threshold', 0.5)
-        self.logger.info(f"OpportunityDetector initialized (threshold: {self.price_difference_threshold}%)")
+        trading = config.get('trading', {})
+        self.threshold = trading.get('price_difference_threshold', 0.3) # 例: 0.3%
 
-    def detect_opportunities(self, prices: Dict) -> List[Dict]:
+        self.logger.info(f"OpportunityDetector initialized (threshold: {self.threshold}%)")
+
+    def detect_opportunities(self, prices: Dict[str, Dict[str, float]]) -> List[Dict]:
         """
-        価格情報からアービトラージ機会を検知
-        prices: PriceMonitorから渡される価格データ
+        各ペアごとに、すべてのDEXの価格を総当たりで比較し、閾値以上の価格差を検知する
         """
         opportunities = []
 
-        for pair, dex_prices in prices.items():
-            if len(dex_prices) < 2:
+        for pair, dex_data in prices.items():
+            # 2つ以上のDEXで価格が取れていないなら比較できないのでスキップ
+            if len(dex_data) < 2:
                 continue
 
-            # 価格差を計算（全DEXペア比較）
-            dex_list = list(dex_prices.items())
-            for i in range(len(dex_list)):
-                for j in range(i + 1, len(dex_list)):
-                    dex1_name, price1 = dex_list[i]
-                    dex2_name, price2 = dex_list[j]
+            dex_names = list(dex_data.keys())
 
-                    if price1 == 0 or price2 == 0:
+            # 総当たり比較 (DEX A と DEX B)
+            for i in range(len(dex_names)):
+                for j in range(len(dex_names)):
+                    if i == j:
                         continue
 
-                    diff_percent = abs(price1 - price2) / min(price1, price2) * 100
+                    buy_dex = dex_names[i]
+                    sell_dex = dex_names[j]
 
-                    if diff_percent >= self.price_difference_threshold:
-                        opportunity = {
-                            "pair": pair,
-                            "buy_dex": dex1_name if price1 < price2 else dex2_name,
-                            "sell_dex": dex2_name if price1 < price2 else dex1_name,
-                            "price_diff_percent": round(diff_percent, 4),
-                            "timestamp": datetime.now().isoformat(),
-                            "expected_profit_usd": None  # 後でProfitabilityCalculatorで計算
-                        }
-                        opportunities.append(opportunity)
+                    buy_price = dex_data[buy_index_price := buy_dex]
+                    sell_price = dex_data[sell_index_price := sell_dex]
 
-                        self.logger.info(f"機会検知: {pair} | {diff_percent:.3f}% ({dex1_name} vs {dex2_name})")
+                    # 100%安全弁
+                    if buy_price <= 0 or sell_price <= 0:
+                        continue
+
+                    # 価格差（％）の計算
+                    # buy_dex で買って、sell_dex で売る。 sellの方が高ければ利益
+                    if sell_price > buy_price:
+                        price_diff_percent = ((sell_price - buy_price) / buy_price) * 100
+
+                        # 設定された閾値（0.3%など）を超えているか
+                        if price_diff_percent >= self.threshold:
+                            self.logger.info(
+                                f"機会検知: {pair} | {price_diff_percent:.3f}% "
+                                f"({buy_dex}: {buy_price:.4f} ➔ {sell_dex}: {sell_price:.4f})"
+                            )
+
+                            # 💡 修正ポイント：利益計算モジュールがハードコードなしで100%動くように、
+                            # 検知に使ったリアルタイムの生価格を辞書に完全にパッキングしてバトンを渡す
+                            opp = {
+                                "pair": pair,
+                                "buy_dex": buy_dex,
+                                "sell_dex": sell_dex,
+                                "buy_price": float(buy_price),   # 👈 確実に渡す
+                                "sell_price": float(sell_price), # 👈 確実に渡す
+                                "price_diff_percent": round(price_diff_percent, 4)
+                            }
+                            opportunities.append(opp)
 
         if opportunities:
             self.logger.warning(f"検知された機会: {len(opportunities)}件")
-            # 将来的にTelegram通知
-
         return opportunities

@@ -102,23 +102,35 @@ class PriceMonitor:
     async def start_monitoring(self):
         self.is_running = True
         self.logger.info("Price monitoring started (DEXアダプター基盤稼働中)")
-        await self.telegram.send_message("🟢 PriceMonitor started (Adapter Mode)")
+        await self.telegram.send_message("🟢 PriceMonitor started (DEX Adapter Base)")
 
         try:
             while self.is_running:
                 start_time = datetime.now()
 
+                # 1. 価格取得
                 prices = await self.get_prices()
+
+                # 2. 機会検知 (Detector)
                 opportunities = self.detector.detect_opportunities(prices)
 
+                # =======================================================
+                # 💡 修正箇所：検知した機会を利益計算 ➔ 実行エンジンへ繋ぐ壁
+                # =======================================================
                 if opportunities:
                     for opp in opportunities:
-                        result = self.profitability.calculate_profitability(opp)
-                        if result and result.get("is_profitable"):
-                            self.logger.warning(f"✅ 実行可能機会: ${result['estimated_profit_usd']} | {result['pair']}")
-                            success = self.executor.execute(result)
+                        # 3. 利益計算 (精密ガス代 ＆ サンドイッチ防御パラメータ算出)
+                        calculated_result = self.profitability.calculate_profitability(opp)
+
+                        # 4. 利益が本当に出る場合のみ、実行エンジンへ投げる
+                        if calculated_result and calculated_result.get("is_profitable"):
+                            self.logger.warning(f"✅ 実行可能機会を発見: ${calculated_result['estimated_profit_usd']} | {calculated_result['pair']}")
+
+                            # 実行エンジン (Executor) の呼び出し
+                            success = self.executor.execute(calculated_result)
                             if success:
-                                self.logger.warning(f"🎯 Executorが処理完了: {result['pair']}")
+                                self.logger.warning(f"🎯 Executorが処理完了: {calculated_result['pair']}")
+                # =======================================================
 
                 self.logger.info(f"[{start_time.strftime('%H:%M:%S')}] {len(self.pairs)}ペアを監視完了")
                 await asyncio.sleep(self.monitoring_interval)
