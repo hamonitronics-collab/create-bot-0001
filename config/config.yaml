@@ -2,8 +2,8 @@
 # すべてのパラメータをここで管理（要件定義準拠）
 
 bot:
-  chain: "arbitrum-sepolia"          # ← テストネットに変更（例）
-  #chain: "arbitrum"                # 本番用（コメントアウト）
+  #chain: "arbitrum-sepolia"          # ← テストネットに変更（例）
+  chain: "arbitrum"                # 本番用（コメントアウト）
   monitoring_interval: 2.0
 
 rpc:

@@ -23,7 +23,7 @@ class Executor:
         self.private_key = os.getenv("PRIVATE_KEY")
 
         # 🚨 修正ポイント1: Dry Runを解除（実際にブロックチェーンに注文を送信します）
-        self.dry_run = False
+        self.dry_run = True
 
         self.w3 = None
         self.account = None
@@ -33,7 +33,7 @@ class Executor:
         self.weth = self.w3.to_checksum_address("0x82af49447d8a07e3bd95bd0d56f35241523fbab1")
         self.usdc = self.w3.to_checksum_address("0xaf88d065e77c8cC2239327C5EDb3A432268e5831") # Native USDC
 
-        self.logger.info(f"🚀 Executor initialized (🚨 DryRun: {'ON' if self.dry_run else 'OFF' painting_danger!!})")
+        self.logger.info(f"🚀 Executor initialized (🚨 DryRun: {'ON' if self.dry_run else 'OFF'})")
 
     def _connect_web3(self):
         try:
