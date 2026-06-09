@@ -107,16 +107,31 @@ class PriceMonitor:
 
             if not base_data or not quote_data: continue
 
-            token_in = self.w3.to_checksum_address(base_data['address'])
-            token_out = self.w3.to_checksum_address(quote_data['address'])
+            # 💡 変更点1：見積もりは「USDC(Quote)を支払って、ARB(Base)を買う」方向でシミュレート
+            token_in = self.w3.to_checksum_address(quote_data['address'])
+            token_out = self.w3.to_checksum_address(base_data['address'])
+
+            # 💡 変更点2：configから「$100」を取得し、桁数情報と一緒に専用パラメータ(params)を作る
+            trade_amount_usd = self.config.get('trading', {}).get('trade_amount_usd', 100.0)
+            quote_decimals = quote_data.get('decimals', 6)   # USDCは6桁
+            base_decimals = base_data.get('decimals', 18)    # ARBなどは18桁
+
+            amount_in_wei = int(trade_amount_usd * (10 ** quote_decimals))
+
+            params = {
+                "amount_in": amount_in_wei,
+                "quote_decimals": quote_decimals,
+                "base_decimals": base_decimals
+            }
 
             dex_data = {}
             tasks = []
             dex_names = []
 
             for dex_name, adapter in self.dex_adapters.items():
-                def fetch_price(ad=adapter):
-                    return ad.get_price(pair, token_in, token_out, {})
+                def fetch_price(ad=adapter, current_params=params):
+                    # 💡 変更点3：空っぽだった {} の代わりに、金額と桁数を入れた current_params を渡す！
+                    return ad.get_price(pair, token_in, token_out, current_params)
 
                 tasks.append(asyncio.to_thread(fetch_price))
                 dex_names.append(dex_name)
@@ -125,7 +140,7 @@ class PriceMonitor:
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for i, result in enumerate(results):
-                if not isinstance(result, Exception) and result is not None:
+                if not isinstance(result, Exception) and result is not None and result > 0:
                     dex_data[dex_names[i]] = result
 
             if dex_data: prices[pair] = dex_data

@@ -1,80 +1,70 @@
+# src/dex/Individual/uniswap_v3.py
+import json
+from web3 import Web3
 from ..base_dex import BaseDEX
 
 class UniswapV3Adapter(BaseDEX):
-    """Uniswap V3用アダプター (完全汎用化 ＆ Fee学習高速化版)"""
+    def __init__(self, w3: Web3, logger, config: dict):
+        super().__init__(w3, logger, config)
+        # 💡 ここを本物の Uniswap V3 QuoterV2 (Arbitrum) のアドレスに修正！
+        self.quoter_address = self.w3.to_checksum_address("0x61fFE014bA17989E743c5F6cB21bF9697530B21e")
 
-    def get_price(self, pair: str, token_in_address: str, token_out_address: str, pair_config: dict) -> float:
+        self.quoter_abi = [
+            {
+                "inputs": [
+                    {
+                        "components": [
+                            {"internalType": "address", "name": "tokenIn", "type": "address"},
+                            {"internalType": "address", "name": "tokenOut", "type": "address"},
+                            {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+                            {"internalType": "uint24", "name": "fee", "type": "uint24"},
+                            {"internalType": "uint160", "name": "sqrtPriceLimitX96", "type": "uint160"}
+                        ],
+                        "internalType": "struct IQuoterV2.QuoteExactInputSingleParams",
+                        "name": "params",
+                        "type": "tuple"
+                    }
+                ],
+                "name": "quoteExactInputSingle",
+                "outputs": [
+                    {"internalType": "uint256", "name": "amountOut", "type": "uint256"},
+                    {"internalType": "uint160", "name": "sqrtPriceX96After", "type": "uint160"},
+                    {"internalType": "uint32", "name": "initializedTicksCrossed", "type": "uint32"},
+                    {"internalType": "uint256", "name": "gasEstimate", "type": "uint256"}
+                ],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            }
+        ]
+        self.quoter_contract = self.w3.eth.contract(address=self.quoter_address, abi=self.quoter_abi)
+
+    def get_price(self, pair: str, token_in: str, token_out: str, params: dict) -> float:
         try:
-            self.ensure_w3()
+            amount_in_wei = params.get("amount_in", 100 * 10**6)
+            fee = params.get("fee", 500) # Uniswapは0.05%
+            quote_decimals = params.get("quote_decimals", 6)
+            base_decimals = params.get("base_decimals", 18)
 
-            # 💡 修正ポイント：自分のファイル名（モジュール名）から動的にキーを取得！
-            # ファイル名が "uniswap_v3.py" なら、ここが自動で "uniswap_v3" になります。
-            dex_key = self.__module__.split('.')[-1]
-
-            # 動的キーを使ってconfigからこのDEXの設定を取得
-            dex_config = self.config.get('dexes', {}).get(dex_key, {})
-            quoter_address_raw = dex_config.get('quoter_address')
-            if not quoter_address_raw:
-                return None
-
-            quoter = self.w3.eth.contract(
-                address=self.w3.to_checksum_address(quoter_address_raw),
-                abi=self._get_quoter_abi()
+            quote_params = (
+                self.w3.to_checksum_address(token_in),
+                self.w3.to_checksum_address(token_out),
+                int(amount_in_wei),
+                int(fee),
+                0  # sqrtPriceLimitX96
             )
 
-            # 2. configからトークンの桁数と「見積もり用数量」を動的取得
-            base_symbol = pair.split('/')[0]
-            token_info = self.config.get('tokens', {}).get(base_symbol, {})
-            decimals = token_info.get('decimals', 18)
-            quote_amount = token_info.get('quote_amount', 1.0)
+            raw_result = self.quoter_contract.functions.quoteExactInputSingle(quote_params).call()
+            amount_out = raw_result[0]
 
-            amount_in = int(quote_amount * (10 ** decimals))
-            multiplier = 1.0 / quote_amount
+            if amount_out == 0: return 0.0
 
-            # 3. 🚀 高速化: 前回成功したFeeティアを一番最初に試すように並び替え
-            best_fee = self.optimal_fees.get(pair)
-            fees_to_try = [best_fee] if best_fee else []
-            for f in [500, 3000, 10000]:
-                if f not in fees_to_try:
-                    fees_to_try.append(f)
+            real_amount_in = amount_in_wei / (10 ** quote_decimals)
+            real_amount_out = amount_out / (10 ** base_decimals)
+            effective_price = real_amount_in / real_amount_out
 
-            for fee in fees_to_try:
-                try:
-                    amount_out = quoter.functions.quoteExactInputSingle(
-                        token_in_address, token_out_address, fee, amount_in, 0
-                    ).call()
+            self.logger.info(f"📊 [{self.__class__.__name__}] 実効価格取得 [{pair} - Fee:{fee}]: {effective_price:.6f} (獲得量: {real_amount_out:.4f} {pair.split('/')[0]})")
+            return float(effective_price)
 
-                    price = float(self.w3.from_wei(amount_out, 'mwei')) * multiplier
-
-                    # 成功したFeeを記憶 (次回から無駄なエラー通信がゼロになる)
-                    if best_fee != fee:
-                        self.optimal_fees[pair] = fee
-
-                    # 💡 ログの出力名も動的な dex_key を使って綺麗に整形（例: Uniswap V3）
-                    log_name = dex_key.replace('_', ' ').title()
-                    self.logger.info(f"{log_name} ({fee/10000}%) [{pair}] 価格取得成功: {price:.4f}")
-                    return round(price, 4)
-                except:
-                    continue
-
-            raise Exception("すべてのfee tierで失敗")
         except Exception as e:
-            # 💡 エラーログの名前も動的に追従させます
-            log_name = dex_key.replace('_', ' ').title() if 'dex_key' in locals() else "Uniswap V3"
-            self.logger.error(f"{log_name}価格取得エラー ({pair}): {e}")
-            return None
-
-    def _get_quoter_abi(self):
-        return [{
-            "inputs": [
-                {"name": "tokenIn", "type": "address"},
-                {"name": "tokenOut", "type": "address"},
-                {"name": "fee", "type": "uint24"},
-                {"name": "amountIn", "type": "uint256"},
-                {"name": "sqrtPriceLimitX96", "type": "uint160"}
-            ],
-            "name": "quoteExactInputSingle",
-            "outputs": [{"name": "amountOut", "type": "uint256"}],
-            "stateMutability": "view",
-            "type": "function"
-        }]
+            self.logger.error(f"❌ [{self.__class__.__name__}] Quoter見積もり失敗 [{pair} - Fee:{fee}]: {e}")
+            return 0.0

@@ -1,87 +1,70 @@
+# src/dex/Individual/sushiswap_v3.py
+import json
+from web3 import Web3
 from ..base_dex import BaseDEX
 
 class SushiswapV3Adapter(BaseDEX):
-    """SushiSwap V3用アダプター (完全汎用化 ＆ Fee学習高速化版)"""
+    def __init__(self, w3: Web3, logger, config: dict):
+        super().__init__(w3, logger, config)
+        # 💡 ここを本物の SushiSwap V3 QuoterV2 (Arbitrum) のアドレスに修正！
+        self.quoter_address = self.w3.to_checksum_address("0x0524e833ccd057e4d7a296e3aaab9f7675964ce1")
 
-    def get_price(self, pair: str, token_in_address: str, token_out_address: str, pair_config: dict) -> float:
+        self.quoter_abi = [
+            {
+                "inputs": [
+                    {
+                        "components": [
+                            {"internalType": "address", "name": "tokenIn", "type": "address"},
+                            {"internalType": "address", "name": "tokenOut", "type": "address"},
+                            {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+                            {"internalType": "uint24", "name": "fee", "type": "uint24"},
+                            {"internalType": "uint160", "name": "sqrtPriceLimitX96", "type": "uint160"}
+                        ],
+                        "internalType": "struct IQuoterV2.QuoteExactInputSingleParams",
+                        "name": "params",
+                        "type": "tuple"
+                    }
+                ],
+                "name": "quoteExactInputSingle",
+                "outputs": [
+                    {"internalType": "uint256", "name": "amountOut", "type": "uint256"},
+                    {"internalType": "uint160", "name": "sqrtPriceX96After", "type": "uint160"},
+                    {"internalType": "uint32", "name": "initializedTicksCrossed", "type": "uint32"},
+                    {"internalType": "uint256", "name": "gasEstimate", "type": "uint256"}
+                ],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            }
+        ]
+        self.quoter_contract = self.w3.eth.contract(address=self.quoter_address, abi=self.quoter_abi)
+
+    def get_price(self, pair: str, token_in: str, token_out: str, params: dict) -> float:
         try:
-            self.ensure_w3()
+            amount_in_wei = params.get("amount_in", 100 * 10**6)
+            fee = params.get("fee", 3000) # SushiSwapは0.3%
+            quote_decimals = params.get("quote_decimals", 6)
+            base_decimals = params.get("base_decimals", 18)
 
-            # 💡 修正ポイント：自分のファイル名（モジュール名）から動的にキーを取得！
-            # self.__module__ は "src.dex.Individual.sushiswap_v3" という文字列を返します。
-            # これをピリオドで分割して一番最後（[-1]）を取ることで "sushiswap_v3" が手に入ります。
-            dex_key = self.__module__.split('.')[-1]
-
-            # ハードコードの 'sushiswap_v3' を、動的キーに変調！
-            dex_config = self.config.get('dexes', {}).get(dex_key, {})
-            quoter_address_raw = dex_config.get('quoter_address')
-            if not quoter_address_raw:
-                return None
-
-            quoter = self.w3.eth.contract(
-                address=self.w3.to_checksum_address(quoter_address_raw),
-                abi=self._get_v3_quoter_v2_abi()
+            quote_params = (
+                self.w3.to_checksum_address(token_in),
+                self.w3.to_checksum_address(token_out),
+                int(amount_in_wei),
+                int(fee),
+                0  # sqrtPriceLimitX96
             )
 
-            # 2. configからトークンの桁数と「見積もり用数量」を動的取得
-            base_symbol = pair.split('/')[0]
-            token_info = self.config.get('tokens', {}).get(base_symbol, {})
-            decimals = token_info.get('decimals', 18)
-            quote_amount = token_info.get('quote_amount', 1.0)
+            raw_result = self.quoter_contract.functions.quoteExactInputSingle(quote_params).call()
+            amount_out = raw_result[0]
 
-            amount_in = int(quote_amount * (10 ** decimals))
-            multiplier = 1.0 / quote_amount
+            if amount_out == 0: return 0.0
 
-            # 3. 🚀 高速化: 前回成功したFeeティアを一番最初に試す
-            best_fee = self.optimal_fees.get(pair)
-            fees_to_try = [best_fee] if best_fee else []
-            for f in [500, 3000, 10000]:
-                if f not in fees_to_try:
-                    fees_to_try.append(f)
+            real_amount_in = amount_in_wei / (10 ** quote_decimals)
+            real_amount_out = amount_out / (10 ** base_decimals)
+            effective_price = real_amount_in / real_amount_out
 
-            for fee in fees_to_try:
-                try:
-                    # SushiSwap特有の引数順序
-                    params = (token_in_address, token_out_address, amount_in, fee, 0)
-                    outputs = quoter.functions.quoteExactInputSingle(params).call()
-                    amount_out = outputs[0]
+            self.logger.info(f"📊 [{self.__class__.__name__}] 実効価格取得 [{pair} - Fee:{fee}]: {effective_price:.6f} (獲得量: {real_amount_out:.4f} {pair.split('/')[0]})")
+            return float(effective_price)
 
-                    price = float(self.w3.from_wei(amount_out, 'mwei')) * multiplier
-
-                    if best_fee != fee:
-                        self.optimal_fees[pair] = fee
-
-                    # 💡 ログの出力名も動的な dex_key を使うことで、表示の整合性を保ちます
-                    self.logger.info(f"{dex_key.replace('_', ' ').title()} ({fee/10000}%) [{pair}] 価格取得成功: {price:.4f}")
-                    return round(price, 4)
-                except:
-                    continue
-
-            raise Exception("全fee tierで流動性がありません")
         except Exception as e:
-            self.logger.error(f"SushiSwap価格取得エラー ({pair}): {e}")
-            return None
-
-    def _get_v3_quoter_v2_abi(self):
-        return [{
-            "inputs": [{
-                "components": [
-                    {"name": "tokenIn", "type": "address"},
-                    {"name": "tokenOut", "type": "address"},
-                    {"name": "amountIn", "type": "uint256"},
-                    {"name": "fee", "type": "uint24"},
-                    {"name": "sqrtPriceLimitX96", "type": "uint160"}
-                ],
-                "name": "params",
-                "type": "tuple"
-            }],
-            "name": "quoteExactInputSingle",
-            "outputs": [
-                {"name": "amountOut", "type": "uint256"},
-                {"name": "sqrtPriceX96After", "type": "uint160"},
-                {"name": "initializedTicksCrossed", "type": "uint32"},
-                {"name": "gasEstimate", "type": "uint256"}
-            ],
-            "stateMutability": "view",
-            "type": "function"
-        }]
+            self.logger.error(f"❌ [{self.__class__.__name__}] Quoter見積もり失敗 [{pair} - Fee:{fee}]: {e}")
+            return 0.0
