@@ -29,19 +29,46 @@ class PriceMonitor:
         self.dex_adapters = {}
 
     def _init_adapters(self):
-        """Web3接続成功後にアダプターをロードする"""
-        for dex_name in self.config.get('dexes', {}).keys():
-            try:
-                module_name = f"src.dex.Individual.{dex_name}"
-                parts = dex_name.split('_')
-                class_name = "".join(p.capitalize() for p in parts) + "Adapter"
+        """
+        💡 【完全汎用化：プラグイン自動検出モード】
+        src/dex/Individual フォルダ内のファイルを全自動スキャンし、
+        定義されているDEXアダプタークラスを自動で発掘・ロードする。
+        """
+        import os
+        from inspect import isclass
 
-                module = importlib.import_module(module_name)
-                adapter_class = getattr(module, class_name)
-                self.dex_adapters[dex_name] = adapter_class(self.w3, self.logger, self.config)
-                self.logger.info(f"🟢 DEXアダプター [{dex_name}] の自動ロードに成功しました ({class_name})")
-            except Exception as e:
-                self.logger.error(f"DEXアダプター {dex_name} のロード失敗: {e}")
+        # アダプターが格納されているディレクトリのパス
+        adapter_dir = os.path.join("src", "dex", "Individual")
+        if not os.path.exists(adapter_dir):
+            self.logger.error(f"❌ アダプターディレクトリが見つかりません: {adapter_dir}")
+            return
+
+        # フォルダ内のファイルをループ処理
+        for file_name in os.listdir(adapter_dir):
+            # .py で終わり、__init__.py 以外のファイルを対象にする
+            if file_name.endswith(".py") and file_name != "__init__.py":
+                module_name = file_name[:-3]  # 拡張子の ".py" を取り除く (例: "sushiswap_v3")
+                full_module_path = f"src.dex.Individual.{module_name}"
+
+                try:
+                    # ファイルを動的にインポート（ロード）
+                    module = importlib.import_module(full_module_path)
+
+                    # ロードしたファイルの中身（属性）をすべて検査
+                    for attr_name in dir(module):
+                        attr = getattr(module, attr_name)
+
+                        # それが「クラス」であり、名前が「Adapter」で終わるものを自動発見
+                        if isclass(attr) and attr_name.endswith("Adapter") and attr_name != "BaseDEX":
+
+                            # 💡 yamlの設定（キー名）とファイル名が一致している場合のみ有効化
+                            # 例: module_nameが "sushiswap_v3" で、yamlにも "sushiswap_v3" があれば合致
+                            if module_name in self.config.get('dexes', {}):
+                                self.dex_adapters[module_name] = attr(self.w3, self.logger, self.config)
+                                self.logger.info(f"🚀 [ファイル自動検出] {file_name} から {attr_name} をハックしてロードしました！")
+
+                except Exception as e:
+                    self.logger.error(f"❌ ファイル {file_name} の自動ロード中にエラー: {e}")
 
     async def _connect_rpc(self):
         """非同期でRPCに接続し、成功したらアダプターを初期化する"""

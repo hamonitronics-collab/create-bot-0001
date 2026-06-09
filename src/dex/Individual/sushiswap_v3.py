@@ -6,8 +6,14 @@ class SushiswapV3Adapter(BaseDEX):
     def get_price(self, pair: str, token_in_address: str, token_out_address: str, pair_config: dict) -> float:
         try:
             self.ensure_w3()
-            # 1. configからQuoterアドレスを動的取得
-            dex_config = self.config.get('dexes', {}).get('sushiswap', {})
+
+            # 💡 修正ポイント：自分のファイル名（モジュール名）から動的にキーを取得！
+            # self.__module__ は "src.dex.Individual.sushiswap_v3" という文字列を返します。
+            # これをピリオドで分割して一番最後（[-1]）を取ることで "sushiswap_v3" が手に入ります。
+            dex_key = self.__module__.split('.')[-1]
+
+            # ハードコードの 'sushiswap_v3' を、動的キーに変調！
+            dex_config = self.config.get('dexes', {}).get(dex_key, {})
             quoter_address_raw = dex_config.get('quoter_address')
             if not quoter_address_raw:
                 return None
@@ -45,7 +51,8 @@ class SushiswapV3Adapter(BaseDEX):
                     if best_fee != fee:
                         self.optimal_fees[pair] = fee
 
-                    self.logger.info(f"SushiSwap V3 ({fee/10000}%) [{pair}] 価格取得成功: {price:.4f}")
+                    # 💡 ログの出力名も動的な dex_key を使うことで、表示の整合性を保ちます
+                    self.logger.info(f"{dex_key.replace('_', ' ').title()} ({fee/10000}%) [{pair}] 価格取得成功: {price:.4f}")
                     return round(price, 4)
                 except:
                     continue

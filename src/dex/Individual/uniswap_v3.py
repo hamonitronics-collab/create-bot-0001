@@ -6,8 +6,13 @@ class UniswapV3Adapter(BaseDEX):
     def get_price(self, pair: str, token_in_address: str, token_out_address: str, pair_config: dict) -> float:
         try:
             self.ensure_w3()
-            # 1. configからQuoterアドレスを動的取得
-            dex_config = self.config.get('dexes', {}).get('uniswap_v3', {})
+
+            # 💡 修正ポイント：自分のファイル名（モジュール名）から動的にキーを取得！
+            # ファイル名が "uniswap_v3.py" なら、ここが自動で "uniswap_v3" になります。
+            dex_key = self.__module__.split('.')[-1]
+
+            # 動的キーを使ってconfigからこのDEXの設定を取得
+            dex_config = self.config.get('dexes', {}).get(dex_key, {})
             quoter_address_raw = dex_config.get('quoter_address')
             if not quoter_address_raw:
                 return None
@@ -41,18 +46,22 @@ class UniswapV3Adapter(BaseDEX):
 
                     price = float(self.w3.from_wei(amount_out, 'mwei')) * multiplier
 
-                    # 💡 成功したFeeを記憶 (次回から無駄なエラー通信がゼロになる)
+                    # 成功したFeeを記憶 (次回から無駄なエラー通信がゼロになる)
                     if best_fee != fee:
                         self.optimal_fees[pair] = fee
 
-                    self.logger.info(f"Uniswap V3 ({fee/10000}%) [{pair}] 価格取得成功: {price:.4f}")
+                    # 💡 ログの出力名も動的な dex_key を使って綺麗に整形（例: Uniswap V3）
+                    log_name = dex_key.replace('_', ' ').title()
+                    self.logger.info(f"{log_name} ({fee/10000}%) [{pair}] 価格取得成功: {price:.4f}")
                     return round(price, 4)
                 except:
                     continue
 
             raise Exception("すべてのfee tierで失敗")
         except Exception as e:
-            self.logger.error(f"Uniswap V3価格取得エラー ({pair}): {e}")
+            # 💡 エラーログの名前も動的に追従させます
+            log_name = dex_key.replace('_', ' ').title() if 'dex_key' in locals() else "Uniswap V3"
+            self.logger.error(f"{log_name}価格取得エラー ({pair}): {e}")
             return None
 
     def _get_quoter_abi(self):
