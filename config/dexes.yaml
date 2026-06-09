@@ -2,6 +2,6 @@ dexes:
   uniswap_v3:
     quoter_address: "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
     router_address: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"
-  sushiswap:
+  sushiswap_v3:
     quoter_address: "0x0524e833ccd057e4d7a296e3aaab9f7675964ce1"
     router_address: "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506"

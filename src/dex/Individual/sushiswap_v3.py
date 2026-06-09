@@ -1,6 +1,6 @@
 from ..base_dex import BaseDEX
 
-class SushiSwapV3Adapter(BaseDEX):
+class SushiswapV3Adapter(BaseDEX):
     """SushiSwap V3用アダプター (完全汎用化 ＆ Fee学習高速化版)"""
 
     def get_price(self, pair: str, token_in_address: str, token_out_address: str, pair_config: dict) -> float:

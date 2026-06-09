@@ -19,5 +19,5 @@ telegram:
   token: "YOUR_BOT_TOKEN"
 
 logging:
-  level: "INFO"
+  level: "WARNING"
   file: "logs/bot.log"
