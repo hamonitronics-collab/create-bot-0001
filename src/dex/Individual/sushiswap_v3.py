@@ -1,35 +1,48 @@
 from ..base_dex import BaseDEX
 
 class SushiSwapV3Adapter(BaseDEX):
-    """SushiSwap V3用のアダプター (構造体引数版・価格インパクト対応)"""
+    """SushiSwap V3用アダプター (完全汎用化 ＆ Fee学習高速化版)"""
 
     def get_price(self, pair: str, token_in_address: str, token_out_address: str, pair_config: dict) -> float:
         try:
-            quoter_address = self.w3.to_checksum_address("0x0524e833ccd057e4d7a296e3aaab9f7675964ce1")
-            quoter = self.w3.eth.contract(address=quoter_address, abi=self._get_v3_quoter_v2_abi())
+            # 1. configからQuoterアドレスを動的取得
+            dex_config = self.config.get('dexes', {}).get('sushiswap', {})
+            quoter_address_raw = dex_config.get('quoter_address')
+            if not quoter_address_raw:
+                return None
 
-            # 💡 修正ポイント: 流動性が薄いDEXでの「価格インパクト」による暴落を防ぐため、
-            # 1フル単位ではなく少額で見積もりを出し、後から掛け算して1単位の価格に戻す
-            if "WBTC" in pair:
-                # 0.001 WBTC (約40ドル相当) で問い合わせ
-                amount_in = int(0.001 * 10**8)
-                multiplier = 1000
-            else:
-                # 0.01 WETH (約16ドル相当) で問い合わせ
-                amount_in = self.w3.to_wei(0.01, 'ether')
-                multiplier = 100
+            quoter = self.w3.eth.contract(
+                address=self.w3.to_checksum_address(quoter_address_raw),
+                abi=self._get_v3_quoter_v2_abi()
+            )
 
-            fees = [500, 3000, 10000]
+            # 2. configからトークンの桁数と「見積もり用数量」を動的取得
+            base_symbol = pair.split('/')[0]
+            token_info = self.config.get('tokens', {}).get(base_symbol, {})
+            decimals = token_info.get('decimals', 18)
+            quote_amount = token_info.get('quote_amount', 1.0)
 
-            for fee in fees:
+            amount_in = int(quote_amount * (10 ** decimals))
+            multiplier = 1.0 / quote_amount
+
+            # 3. 🚀 高速化: 前回成功したFeeティアを一番最初に試す
+            best_fee = self.optimal_fees.get(pair)
+            fees_to_try = [best_fee] if best_fee else []
+            for f in [500, 3000, 10000]:
+                if f not in fees_to_try:
+                    fees_to_try.append(f)
+
+            for fee in fees_to_try:
                 try:
+                    # SushiSwap特有の引数順序
                     params = (token_in_address, token_out_address, amount_in, fee, 0)
                     outputs = quoter.functions.quoteExactInputSingle(params).call()
                     amount_out = outputs[0]
 
-                    # 少額の取得結果(USDC)を乗数で拡大して、1フル単位の価格にする
-                    base_price = float(self.w3.from_wei(amount_out, 'mwei'))
-                    price = base_price * multiplier
+                    price = float(self.w3.from_wei(amount_out, 'mwei')) * multiplier
+
+                    if best_fee != fee:
+                        self.optimal_fees[pair] = fee
 
                     self.logger.info(f"SushiSwap V3 ({fee/10000}%) [{pair}] 価格取得成功: {price:.4f}")
                     return round(price, 4)

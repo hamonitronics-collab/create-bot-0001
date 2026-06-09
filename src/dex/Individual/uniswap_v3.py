@@ -1,40 +1,54 @@
 from ..base_dex import BaseDEX
 
 class UniswapV3Adapter(BaseDEX):
-    """Uniswap V3用のアダプター (価格インパクト対応版)"""
+    """Uniswap V3用アダプター (完全汎用化 ＆ Fee学習高速化版)"""
 
     def get_price(self, pair: str, token_in_address: str, token_out_address: str, pair_config: dict) -> float:
         try:
-            # 必須アドレスの取得（Uniswapは共通の旧USDC等を使用する想定）
-            quoter_address = self.w3.to_checksum_address("0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6")
-            quoter = self.w3.eth.contract(address=quoter_address, abi=self._get_quoter_abi())
+            # 1. configからQuoterアドレスを動的取得
+            dex_config = self.config.get('dexes', {}).get('uniswap_v3', {})
+            quoter_address_raw = dex_config.get('quoter_address')
+            if not quoter_address_raw:
+                return None
 
-            # 💡 修正ポイント: 流動性が薄い場合の「価格インパクト」による暴落を防ぐため、
-            # 少額で見積もりを出し、後から掛け算して1単位の価格に戻す
-            if "WBTC" in pair:
-                # 0.001 WBTC で問い合わせ
-                amount_in = int(0.001 * 10**8)
-                multiplier = 1000
-            else:
-                # 0.01 WETH で問い合わせ
-                amount_in = self.w3.to_wei(0.01, 'ether')
-                multiplier = 100
+            quoter = self.w3.eth.contract(
+                address=self.w3.to_checksum_address(quoter_address_raw),
+                abi=self._get_quoter_abi()
+            )
 
-            fees = [500, 3000, 10000]
-            for fee in fees:
+            # 2. configからトークンの桁数と「見積もり用数量」を動的取得
+            base_symbol = pair.split('/')[0]
+            token_info = self.config.get('tokens', {}).get(base_symbol, {})
+            decimals = token_info.get('decimals', 18)
+            quote_amount = token_info.get('quote_amount', 1.0)
+
+            amount_in = int(quote_amount * (10 ** decimals))
+            multiplier = 1.0 / quote_amount
+
+            # 3. 🚀 高速化: 前回成功したFeeティアを一番最初に試すように並び替え
+            best_fee = self.optimal_fees.get(pair)
+            fees_to_try = [best_fee] if best_fee else []
+            for f in [500, 3000, 10000]:
+                if f not in fees_to_try:
+                    fees_to_try.append(f)
+
+            for fee in fees_to_try:
                 try:
                     amount_out = quoter.functions.quoteExactInputSingle(
                         token_in_address, token_out_address, fee, amount_in, 0
                     ).call()
 
-                    # 少額の取得結果(USDC)を乗数で拡大して、1フル単位の価格にする
-                    base_price = float(self.w3.from_wei(amount_out, 'mwei'))
-                    price = base_price * multiplier
+                    price = float(self.w3.from_wei(amount_out, 'mwei')) * multiplier
+
+                    # 💡 成功したFeeを記憶 (次回から無駄なエラー通信がゼロになる)
+                    if best_fee != fee:
+                        self.optimal_fees[pair] = fee
 
                     self.logger.info(f"Uniswap V3 ({fee/10000}%) [{pair}] 価格取得成功: {price:.4f}")
                     return round(price, 4)
                 except:
                     continue
+
             raise Exception("すべてのfee tierで失敗")
         except Exception as e:
             self.logger.error(f"Uniswap V3価格取得エラー ({pair}): {e}")

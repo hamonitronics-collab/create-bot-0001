@@ -34,12 +34,10 @@ class PriceMonitor:
         self.profitability = ProfitabilityCalculator(config, logger, telegram)
         self.executor = Executor(config, logger, telegram)
 
-        # 💡 修正ポイント: 古い `self.tokens` のハードコード辞書を完全に削除しました！
-        # 代わりに、config_loader が合体させた tokens.yaml のデータを直接使います。
-
+        # 💡 アダプタに config を渡すように修正
         self.dex_adapters = {
-            "uniswap_v3": UniswapV3Adapter(self.w3, self.logger),
-            "sushiswap": SushiSwapV3Adapter(self.w3, self.logger)
+            "uniswap_v3": UniswapV3Adapter(self.w3, self.logger, self.config),
+            "sushiswap": SushiSwapV3Adapter(self.w3, self.logger, self.config)
         }
 
         self.logger.info(f"PriceMonitor initialized (監視対象: {self.pairs})")
