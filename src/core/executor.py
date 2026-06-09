@@ -1,3 +1,4 @@
+# src/core/executor.py
 import os
 import time
 from dotenv import load_dotenv
@@ -11,7 +12,7 @@ from ..utils.telegram import TelegramNotifier
 class Executor:
     """
     アービトラージ機会を実行するモジュール
-    【テストネット・本番実弾稼働版（セーフティロック搭載）】
+    【完全自動ルーティング・汎用化対応版】
     """
 
     def __init__(self, config: dict, logger: BotLogger, telegram: TelegramNotifier):
@@ -21,20 +22,17 @@ class Executor:
 
         load_dotenv(override=True)
         self.private_key = os.getenv("PRIVATE_KEY")
-
-        # 🚨 修正ポイント1: Dry Runを解除（実際にブロックチェーンに注文を送信します）
-        self.dry_run = True
+        self.dry_run = True  # 🛡️ シミュレーション継続
 
         self.w3 = None
         self.account = None
         self._connect_web3()
 
-        # トークンアドレス定義
-        self.weth = self.w3.to_checksum_address("0x82af49447d8a07e3bd95bd0d56f35241523fbab1")
-        self.usdc = self.w3.to_checksum_address("0xaf88d065e77c8cC2239327C5EDb3A432268e5831") # Native USDC
+        # 💡 WETHやUSDCのハードコードアドレス宣言を完全に削除しました！
 
         self.logger.info(f"🚀 Executor initialized (🚨 DryRun: {'ON' if self.dry_run else 'OFF'})")
 
+    # (_connect_web3, execute, _check_and_approve メソッドは変更なし)
     def _connect_web3(self):
         try:
             rpc_url = self.config.get('rpc', {}).get(self.config['bot'].get('chain', 'arbitrum'), {}).get('url', "https://arb1.arbitrum.io/rpc")
@@ -132,7 +130,7 @@ class Executor:
             return False
 
     def _perform_swap(self, dex_name: str, pair: str, is_buy: bool, opp_data: Dict) -> bool:
-        """オンチェーン上で本当にスワップを実行する"""
+        """オンチェーンスワップ実行（動的パス対応）"""
         try:
             dex_config = self.config.get('dexes', {}).get(dex_name, {})
             router_address_raw = dex_config.get('router_address')
@@ -142,18 +140,25 @@ class Executor:
             router_address = self.w3.to_checksum_address(router_address_raw)
             router = self.w3.eth.contract(address=router_address, abi=self._get_router_abi())
 
+            # 💡 汎用化: ペア名から config に登録されたアドレスを動的に引っ張る
+            base_symbol, quote_symbol = pair.split('/')
+            base_token_address = self.w3.to_checksum_address(self.config['tokens'][base_symbol]['address'])
+            quote_token_address = self.w3.to_checksum_address(self.config['tokens'][quote_symbol]['address'])
+
             if is_buy:
-                path = [self.usdc, self.weth]
+                # 買い: Quote(USDC) ➔ Base(ARB)
+                path = [quote_token_address, base_token_address]
                 amount_in = int(opp_data['buy_amount_in'])
                 expected_out = int(opp_data['buy_min_amount_out'])
-                token_to_approve = self.usdc
-                direction_text = f"USDC ➔ WETH (買い) | 最小保証: {expected_out / 10**18:.6f} WETH"
+                token_to_approve = quote_token_address
+                direction_text = f"{quote_symbol} ➔ {base_symbol} (買い)"
             else:
-                path = [self.weth, self.usdc]
+                # 売り: Base(ARB) ➔ Quote(USDC)
+                path = [base_token_address, quote_token_address]
                 amount_in = int(opp_data['sell_amount_in'])
                 expected_out = int(opp_data['sell_min_amount_out'])
-                token_to_approve = self.weth
-                direction_text = f"WETH ➔ USDC (売り) | 最小保証: {expected_out / 10**6:.2f} USDC"
+                token_to_approve = base_token_address
+                direction_text = f"{base_symbol} ➔ {quote_symbol} (売り)"
 
             self.logger.warning(f"[{dex_name}] {direction_text} トランザクション構築中...")
 

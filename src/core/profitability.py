@@ -52,41 +52,53 @@ class ProfitabilityCalculator:
                 self.logger.error(f"⚠️ 収益性計算スキップ: {pair} のリアルタイム生価格が不正です (buy:{buy_price}, sell:{sell_price})")
                 return None
 
+# src/core/profitability.py の calculate_profitability 内の後半部分を修正
+
             # === 1. 粗利・スリッページ・ガス代のUSD計算 ===
+            # (この部分は変更なし)
             gross_profit_usd = self.trade_amount_usd * (price_diff_percent / 100)
             slippage_loss_usd = self.trade_amount_usd * ((self.max_slippage / 2) / 100)
 
-            # ガス代（Web3接続時はリアルタイム、失敗時は$0.05フォールバック）
             gas_cost_usd = 0.05
             if self.w3 and self.w3.is_connected():
                 try:
                     gas_price_wei = self.w3.eth.gas_price
                     gas_cost_eth = float(self.w3.from_wei(250000 * 2, 'ether')) * gas_price_wei
-                    gas_cost_usd = gas_cost_eth * buy_price # 投入トークン建ての価格換算（生価格を使用）
+                    gas_cost_usd = gas_cost_eth * buy_price
                 except:
                     pass
 
             net_profit_usd = gross_profit_usd - slippage_loss_usd - gas_cost_usd
             is_profitable = net_profit_usd >= self.min_profit_usd
 
+            # =================================================================
+            # 💡 汎用化: ペア名（例: ARB/USDC）から config を参照して桁数を全自動取得
+            base_symbol, quote_symbol = pair.split('/')
+            base_decimals = self.config['tokens'][base_symbol]['decimals']
+            quote_decimals = self.config['tokens'][quote_symbol]['decimals']
+
             # === 2. 🛡️ サンドイッチ防御壁：amountOutMin（最低保証量）の算出 ===
-            # ① 1ステップ目（買い: USDC ➔ WETH/WBTC）
-            buy_amount_in_raw = int(self.trade_amount_usd * 10**6)
+            # ① 1ステップ目（買い: Quote(USDC) ➔ Base(ARBなど)）
+            # 投入USDCを Decimals に合わせて Wei 化
+            buy_amount_in_raw = int(self.trade_amount_usd * 10**quote_decimals)
             expected_token_out = buy_amount_in_raw / buy_price
 
-            # ペアに応じてDecimals（WETH=18, WBTC=8）を動的に切り替える
-            decimals = 8 if "WBTC" in pair else 18
-            buy_expected_out_wei = int(expected_token_out * (10**(decimals - 6)))
+            # 受け取る Base トークンの Decimals に合わせて Wei 化
+            buy_expected_out_wei = int(expected_token_out * (10**(base_decimals - quote_decimals)))
             buy_min_amount_out = int(buy_expected_out_wei * (1 - (self.max_slippage / 100)))
 
-            # ② 2ステップ目（売り: WETH/WBTC ➔ USDC）
+            # ② 2ステップ目（売り: Base(ARBなど) ➔ Quote(USDC)）
             sell_amount_in_wei = buy_expected_out_wei
-            expected_usdc_out = (sell_amount_in_wei / 10**decimals) * sell_price
-            sell_expected_out_mwei = int(expected_usdc_out * 10**6)
-            sell_min_amount_out = int(sell_expected_out_mwei * (1 - (self.max_slippage / 100)))
+            expected_quote_out = (sell_amount_in_wei / 10**base_decimals) * sell_price
+
+            # 最終的に受け取る USDC の Decimals に合わせて Wei 化
+            sell_expected_out_raw = int(expected_quote_out * 10**quote_decimals)
+            sell_min_amount_out = int(sell_expected_out_raw * (1 - (self.max_slippage / 100)))
+            # =================================================================
 
             result = {
                 **opportunity,
+                # (以下の戻り値は変更なし)
                 "trade_amount_usd": self.trade_amount_usd,
                 "estimated_profit_usd": round(net_profit_usd, 3),
                 "is_profitable": is_profitable,
