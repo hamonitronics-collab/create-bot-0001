@@ -22,8 +22,6 @@ class PriceMonitor:
         self.is_running = False
         self.w3 = None
 
-        # 初期化順序を確定させる
-        self._connect_rpc()
         self.detector = OpportunityDetector(config, logger, telegram)
         self.profitability = ProfitabilityCalculator(config, logger, telegram)
         self.executor = Executor(config, logger, telegram)
@@ -51,6 +49,7 @@ class PriceMonitor:
             # 💡 タイムアウト設定を追加！
             self.w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 5}))
 
+            self.logger.critical(f"priceMonitorの_connect_rpcが呼び出されました | Chain: {chain} | RPC URL: {rpc_url}")
             # 接続確認を厳密にする
             if self.w3.is_connected():
                 self.logger.info(f"✅ PriceMonitor RPC接続成功 | Chain ID: {self.w3.eth.chain_id}")
@@ -86,6 +85,10 @@ class PriceMonitor:
         return prices
 
     async def start_monitoring(self):
+        if not self.w3:
+            self.logger.critical(f"priceMonitorのstart_monitoringが呼び出されたが、Web3接続が確立されていません")
+            self._connect_rpc()
+
         self.is_running = True
         self.logger.info("Price monitoring started")
         await self.telegram.send_message("🟢 PriceMonitor started")

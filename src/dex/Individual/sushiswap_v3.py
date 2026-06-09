@@ -5,6 +5,7 @@ class SushiswapV3Adapter(BaseDEX):
 
     def get_price(self, pair: str, token_in_address: str, token_out_address: str, pair_config: dict) -> float:
         try:
+            self.ensure_w3()
             # 1. configからQuoterアドレスを動的取得
             dex_config = self.config.get('dexes', {}).get('sushiswap', {})
             quoter_address_raw = dex_config.get('quoter_address')

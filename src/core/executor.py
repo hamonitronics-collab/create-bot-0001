@@ -26,13 +26,11 @@ class Executor:
 
         self.w3 = None
         self.account = None
-        self._connect_web3()
 
         # 💡 WETHやUSDCのハードコードアドレス宣言を完全に削除しました！
 
         self.logger.info(f"🚀 Executor initialized (🚨 DryRun: {'ON' if self.dry_run else 'OFF'})")
 
-    # (_connect_web3, execute, _check_and_approve メソッドは変更なし)
     def _connect_web3(self):
         try:
             rpc_url = self.config.get('rpc', {}).get(self.config['bot'].get('chain', 'arbitrum'), {}).get('url', "https://arb1.arbitrum.io/rpc")
@@ -44,6 +42,9 @@ class Executor:
             self.logger.error(f"Executor Web3接続エラー: {e}")
 
     def execute(self, opportunity: Dict) -> bool:
+        if not self.w3:
+            self.logger.critical(f"executerのexecuteが呼び出されたが、Web3接続が確立されていません")
+            self._connect_web3()
         try:
             if not opportunity.get('is_profitable', False):
                 return False
