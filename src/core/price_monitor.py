@@ -4,7 +4,7 @@ from datetime import datetime
 from web3 import Web3
 import importlib
 
-# 必要なクラスを正しくインポート
+# 必要なクラスをインポート
 from ..utils.logger import BotLogger
 from ..utils.telegram import TelegramNotifier
 from .opportunity_detector import OpportunityDetector
@@ -26,9 +26,12 @@ class PriceMonitor:
         self.profitability = ProfitabilityCalculator(config, logger, telegram)
         self.executor = Executor(config, logger, telegram)
 
-        # DEXアダプターの自動ロード
+        # 💡 アダプターの格納場所だけ準備
         self.dex_adapters = {}
-        for dex_name in config.get('dexes', {}).keys():
+
+    def _init_adapters(self):
+        """Web3接続成功後にアダプターをロードする"""
+        for dex_name in self.config.get('dexes', {}).keys():
             try:
                 module_name = f"src.dex.Individual.{dex_name}"
                 parts = dex_name.split('_')
@@ -36,40 +39,45 @@ class PriceMonitor:
 
                 module = importlib.import_module(module_name)
                 adapter_class = getattr(module, class_name)
+                # 💡 ここで w3 が確実に存在する状態で注入！
                 self.dex_adapters[dex_name] = adapter_class(self.w3, self.logger, self.config)
             except Exception as e:
                 self.logger.error(f"DEXアダプター {dex_name} のロード失敗: {e}")
 
-        self.logger.info(f"PriceMonitor initialized (監視対象: {self.pairs})")
-
-    def _connect_rpc(self):
+    async def _connect_rpc(self):
+        """非同期でRPCに接続し、成功したらアダプターを初期化する"""
         try:
             chain = self.config['bot']['chain']
             rpc_url = self.config['rpc'][chain]['url']
-            # 💡 タイムアウト設定を追加！
-            self.w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 5}))
 
-            self.logger.critical(f"priceMonitorの_connect_rpcが呼び出されました | Chain: {chain} | RPC URL: {rpc_url}")
-            # 接続確認を厳密にする
-            if self.w3.is_connected():
-                self.logger.info(f"✅ PriceMonitor RPC接続成功 | Chain ID: {self.w3.eth.chain_id}")
+            def connect():
+                w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 5}))
+                return w3 if w3.is_connected() else None
+
+            self.w3 = await asyncio.to_thread(connect)
+
+            if self.w3:
+                self.logger.info(f"✅ RPC接続成功 | Chain ID: {self.w3.eth.chain_id}")
+                # 💡 接続成功したので、ここでアダプターを作る！
+                self._init_adapters()
             else:
-                self.logger.error("RPC接続失敗")
+                self.logger.error("❌ RPC接続失敗")
         except Exception as e:
             self.logger.error(f"RPC接続エラー: {e}")
 
     async def get_prices(self) -> Dict[str, Dict[str, float]]:
+        # 接続がなければ再接続を試みる
+        if not self.w3 or not (await asyncio.to_thread(self.w3.is_connected)):
+            await self._connect_rpc()
+            if not self.w3: return {}
+
         prices = {}
         for pair in self.pairs:
-            if not self.w3.is_connected():
-                self._connect_rpc()
-
             base_sym, quote_sym = pair.split("/")
             base_data = self.config.get('tokens', {}).get(base_sym)
             quote_data = self.config.get('tokens', {}).get(quote_sym)
 
-            if not base_data or not quote_data:
-                continue
+            if not base_data or not quote_data: continue
 
             token_in = self.w3.to_checksum_address(base_data['address'])
             token_out = self.w3.to_checksum_address(quote_data['address'])
@@ -77,36 +85,23 @@ class PriceMonitor:
             dex_data = {}
             for dex_name, adapter in self.dex_adapters.items():
                 price = adapter.get_price(pair, token_in, token_out, {})
-                if price:
-                    dex_data[dex_name] = price
+                if price: dex_data[dex_name] = price
 
-            if dex_data:
-                prices[pair] = dex_data
+            if dex_data: prices[pair] = dex_data
         return prices
 
     async def start_monitoring(self):
-        if not self.w3:
-            self.logger.critical(f"priceMonitorのstart_monitoringが呼び出されたが、Web3接続が確立されていません")
-            self._connect_rpc()
-
         self.is_running = True
         self.logger.info("Price monitoring started")
         await self.telegram.send_message("🟢 PriceMonitor started")
 
-        try:
-            while self.is_running:
-                start_time = datetime.now()
-                prices = await self.get_prices()
-
-                # ここで self.detector が確実に存在することを確認
+        while self.is_running:
+            prices = await self.get_prices()
+            if prices:
                 opportunities = self.detector.detect_opportunities(prices)
-
                 if opportunities:
                     for opp in opportunities:
-                        calculated = self.profitability.calculate_profitability(opp)
-                        if calculated and calculated.get("is_profitable"):
-                            self.executor.execute(calculated)
-
-                await asyncio.sleep(self.monitoring_interval)
-        except Exception as e:
-            self.logger.error(f"Monitoring error: {e}")
+                        calc = self.profitability.calculate_profitability(opp)
+                        if calc and calc.get("is_profitable"):
+                            self.executor.execute(calc)
+            await asyncio.sleep(self.monitoring_interval)
