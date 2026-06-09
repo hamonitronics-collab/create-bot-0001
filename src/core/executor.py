@@ -2,6 +2,7 @@
 import json
 import os
 import time
+import asyncio  # 💡 追記：フリーズ防止用の非同期ライブラリ
 from dotenv import load_dotenv
 from typing import Dict, Optional
 from web3 import Web3
@@ -29,11 +30,10 @@ class Executor:
 
         # アカウント情報と秘密鍵のロード
         self.account_address = self.w3.to_checksum_address(config['account']['address'])
-        # 💡 安全対策：環境変数、またはconfigから秘密鍵を読み込み
         load_dotenv()
         self.private_key = os.getenv('BOT_PRIVATE_KEY') or config['account'].get('private_key')
 
-        # 💡 コントラクト設定の動的ロード
+        # コントラクト設定の動的ロード
         self.contract_address = config.get('contract', {}).get('address')
         self.contract = None
 
@@ -46,7 +46,6 @@ class Executor:
     def _load_contract(self):
         """Foundryのビルド成果物(JSON)からABIを自動ロードする"""
         try:
-            # フォルダ構成に合わせて一般的な2パターンのパスを自動検索
             possible_paths = [
                 os.path.join("src", "contracts", "out", "ArbitrageExecutor.sol", "ArbitrageExecutor.json"),
                 os.path.join("contracts", "out", "ArbitrageExecutor.sol", "ArbitrageExecutor.json")
@@ -70,7 +69,8 @@ class Executor:
         except Exception as e:
             self.logger.error(f"❌ コントラクトABIの読み込みに失敗: {e}")
 
-    def execute(self, opportunity_calc: dict):
+    # 💡 修正点：関数に「async」を付与して非同期対応にする
+    async def execute(self, opportunity_calc: dict):
         """
         監視エンジンから検知された機会を受け取り、
         自作スマートコントラクトの executeArbitrage 関数をオンチェーンで実行する
@@ -90,13 +90,12 @@ class Executor:
             self.logger.error(f"❌ トークン設定が config に不足しています: {pair}")
             return
 
-        # 💡 アビトラの原資トークン（ tokenIn = USDC など ）と 経由トークン（ tokenOut = WETH など ）
         token_in_address = self.w3.to_checksum_address(tokens_config[quote_sym]['address'])
         token_out_address = self.w3.to_checksum_address(tokens_config[base_sym]['address'])
 
-        # 数量の動的計算（例: 100ドル）
+        # 💡 修正点：YAMLの記述に合わせて「trading.trade_amount_usd」から動的に金額を取得するよう修正！
         decimals = tokens_config[quote_sym].get('decimals', 6)
-        trade_amount_dollars = self.config['trading'].get('trade_amount', 100.0)
+        trade_amount_dollars = self.config['trading'].get('trade_amount_usd', 100.0)
         amount_in = int(trade_amount_dollars * (10 ** decimals))
 
         # DEXルーターのアドレスをconfigから動的取得
@@ -111,11 +110,9 @@ class Executor:
         buy_router = self.w3.to_checksum_address(dex_config[buy_dex]['router_address'])
         sell_router = self.w3.to_checksum_address(dex_config[sell_dex]['router_address'])
 
-        # 💡 高速プール判定: 機会検知データからFeeティアを抽出（デフォルトは最頻出の500=0.05%）
         fee_buy = opp.get("buy_fee", 500)
         fee_sell = opp.get("sell_fee", 500)
 
-        # 最小獲得利益（スリッページやガス代負けを防ぐため最低0.1ドル以上の純利をコントラクト側で強制検証）
         min_profit = int(0.1 * (10 ** decimals))
 
         self.logger.warning(f"🔥 【アビトラ戦闘シグナル】 {pair} で価格乖離を捕捉！")
@@ -131,23 +128,15 @@ class Executor:
             return
 
         try:
-            # 1. Nonce（取引通し番号）の取得
-            nonce = self.w3.eth.get_transaction_count(self.account_address)
+            # 💡 修正点：通信ブロックを防ぐため、イベントループを取得して非同期スレッドに逃がす
+            loop = asyncio.get_event_loop()
 
-            # 2. ガス代（ガスリミット・現在価格）の構築
+            nonce = self.w3.eth.get_transaction_count(self.account_address)
             gas_price = self.w3.eth.gas_price
 
-            # 3. 自作スマートコントラクトの「executeArbitrage」呼び出しをビルド
-            # Foundryのシミュレーションテストで叩き出した「277,641ガス」をベースに、余裕を持たせた安全リミット値を指定！
             tx_build = self.contract.functions.executeArbitrage(
-                token_in_address,
-                token_out_address,
-                amount_in,
-                buy_router,
-                fee_buy,
-                sell_router,
-                fee_sell,
-                min_profit
+                token_in_address, token_out_address, amount_in,
+                buy_router, fee_buy, sell_router, fee_sell, min_profit
             ).build_transaction({
                 'chainId': self.w3.eth.chain_id,
                 'gas': 350000,
@@ -155,23 +144,21 @@ class Executor:
                 'nonce': nonce,
             })
 
-            # 4. あなたの秘密鍵で取引を暗号電子署名
             signed_tx = self.w3.eth.account.sign_transaction(tx_build, private_key=self.private_key)
 
-            # 5. ネットワーク（Arbitrum）にトランザクションを射出！
             self.logger.warning("🚀 トランザクションをメインネットへパブリッシュ中...")
-            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
 
-            # 6. ブロックに書き込まれて確定するのを追跡待ち
+            # 💡 修正点：send と wait_for_receipt を非同期実行に変え、メインループを絶対に止めないようにする！
+            tx_hash = await loop.run_in_executor(None, lambda: self.w3.eth.send_raw_transaction(signed_tx.rawTransaction))
             self.logger.info(f"⏳ オンチェーン承認待ち... TxHash: {tx_hash.hex()}")
-            tx_receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+
+            tx_receipt = await loop.run_in_executor(None, lambda: self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30))
 
             if tx_receipt['status'] == 1:
                 self.logger.warning(f"🏆 🏆 🏆 【アビトラ大勝利】 取引が正常にブロックへ書き込まれました！ Tx: {tx_hash.hex()}")
-                # スマホのTelegramへ勝利のファンファーレ通知
                 self.telegram.send_message(f"🏆 【アビトラ成功通知】\nペア: {pair}\n投入原資: ${trade_amount_dollars}\nTxHash: {tx_hash.hex()}")
             else:
-                self.logger.error(f"❌ トランザクションがオンチェーン実行中にRevert（強制終了）しました。スマートコントラクトの防衛機能により、原資資金は100%安全に保護されました。")
+                self.logger.error(f"❌ トランザクションがオンチェーン実行中にRevert（強制終了）しました。")
 
         except Exception as e:
             self.logger.error(f"❌ オンチェーン注文の送信中に深刻なエラーが発生しました: {e}")
