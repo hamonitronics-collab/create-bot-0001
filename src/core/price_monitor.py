@@ -94,7 +94,6 @@ class PriceMonitor:
             self.logger.error(f"RPC接続エラー: {e}")
 
     async def get_prices(self) -> Dict[str, Dict[str, float]]:
-        # 接続がなければ再接続を試みる
         if not self.w3 or not (await asyncio.to_thread(self.w3.is_connected)):
             await self._connect_rpc()
             if not self.w3: return {}
@@ -107,43 +106,53 @@ class PriceMonitor:
 
             if not base_data or not quote_data: continue
 
-            # 💡 変更点1：見積もりは「USDC(Quote)を支払って、ARB(Base)を買う」方向でシミュレート
-            token_in = self.w3.to_checksum_address(quote_data['address'])
-            token_out = self.w3.to_checksum_address(base_data['address'])
+            token_base = self.w3.to_checksum_address(base_data['address'])
+            token_quote = self.w3.to_checksum_address(quote_data['address'])
 
-            # 💡 変更点2：configから「$100」を取得し、桁数情報と一緒に専用パラメータ(params)を作る
             trade_amount_usd = self.config.get('trading', {}).get('trade_amount_usd', 100.0)
-            quote_decimals = quote_data.get('decimals', 6)   # USDCは6桁
-            base_decimals = base_data.get('decimals', 18)    # ARBなどは18桁
-
+            quote_decimals = quote_data.get('decimals', 6)
+            base_decimals = base_data.get('decimals', 18)
             amount_in_wei = int(trade_amount_usd * (10 ** quote_decimals))
 
-            params = {
-                "amount_in": amount_in_wei,
-                "quote_decimals": quote_decimals,
-                "base_decimals": base_decimals
-            }
+            dex_data_buy = {}
+            dex_data_sell = {}
+            dex_names = list(self.dex_adapters.keys())
 
-            dex_data = {}
-            tasks = []
-            dex_names = []
-
+            # 💡【ステップ1】まずは全DEXで「往路（買う）」の見積もりを一斉取得
+            tasks_buy = []
             for dex_name, adapter in self.dex_adapters.items():
-                def fetch_price(ad=adapter, current_params=params):
-                    # 💡 変更点3：空っぽだった {} の代わりに、金額と桁数を入れた current_params を渡す！
-                    return ad.get_price(pair, token_in, token_out, current_params)
+                params_buy = {"amount_in": amount_in_wei, "quote_decimals": quote_decimals, "base_decimals": base_decimals}
+                tasks_buy.append(asyncio.to_thread(adapter.get_price, pair, token_quote, token_base, params_buy))
 
-                tasks.append(asyncio.to_thread(fetch_price))
-                dex_names.append(dex_name)
+            results_buy = await asyncio.gather(*tasks_buy, return_exceptions=True)
 
-            # すべてのDEXの返事を一斉に待つ（並列処理）
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # 往路で手に入る「最大枚数(Wei)」を計算（一番条件が良いDEXで買った場合の枚数）
+            max_base_amount_wei = 0
+            for i, res in enumerate(results_buy):
+                if not isinstance(res, Exception) and res > 0:
+                    dex_data_buy[dex_names[i]] = res
+                    # 実効価格(res)から、手に入るBaseトークンの真の枚数を逆算
+                    real_amount_out = (amount_in_wei / (10**quote_decimals)) / res
+                    base_amount_wei = int(real_amount_out * (10**base_decimals))
+                    if base_amount_wei > max_base_amount_wei:
+                        max_base_amount_wei = base_amount_wei
 
-            for i, result in enumerate(results):
-                if not isinstance(result, Exception) and result is not None and result > 0:
-                    dex_data[dex_names[i]] = result
+            # 💡【ステップ2】往路で手に入れた「正確なトークン枚数」を使って、全DEXで「復路（売る）」の見積もりを取得！
+            if max_base_amount_wei > 0:
+                tasks_sell = []
+                for dex_name, adapter in self.dex_adapters.items():
+                    # 復路なので decimals を逆にする
+                    params_sell = {"amount_in": max_base_amount_wei, "quote_decimals": base_decimals, "base_decimals": quote_decimals}
+                    tasks_sell.append(asyncio.to_thread(adapter.get_price, pair, token_base, token_quote, params_sell))
 
-            if dex_data: prices[pair] = dex_data
+                results_sell = await asyncio.gather(*tasks_sell, return_exceptions=True)
+
+                for i, res in enumerate(results_sell):
+                    if not isinstance(res, Exception) and res > 0:
+                        dex_data_sell[dex_names[i]] = res
+
+            if dex_data_buy and dex_data_sell:
+                 prices[pair] = {"buy": dex_data_buy, "sell": dex_data_sell}
 
         return prices
 

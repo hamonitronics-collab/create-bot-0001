@@ -62,9 +62,12 @@ class UniswapV3Adapter(BaseDEX):
             real_amount_out = amount_out / (10 ** base_decimals)
             effective_price = real_amount_in / real_amount_out
 
-            self.logger.info(f"📊 [{self.__class__.__name__}] 実効価格取得 [{pair} - Fee:{fee}]: {effective_price:.6f} (獲得量: {real_amount_out:.4f} {pair.split('/')[0]})")
-            return float(effective_price)
+            base_sym, quote_sym = pair.split("/")
+            base_addr = self.config['tokens'][base_sym]['address'].lower()
+            display_sym = base_sym if token_out.lower() == base_addr else quote_sym
 
+            self.logger.info(f"📊 [{self.__class__.__name__}] 実効価格取得 [{pair} - Fee:{fee}]: {effective_price:.6f} (獲得量: {real_amount_out:.4f} {display_sym})")
+            return float(effective_price)
         except Exception as e:
             self.logger.error(f"❌ [{self.__class__.__name__}] Quoter見積もり失敗 [{pair} - Fee:{fee}]: {e}")
             return 0.0
