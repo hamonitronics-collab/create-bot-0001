@@ -1,54 +1,23 @@
-# DEX間アービトラージBot config.yaml
-# すべてのパラメータをここで管理（要件定義準拠）
-
 bot:
-  #chain: "arbitrum-sepolia"          # ← テストネットに変更（例）
-  chain: "arbitrum"                # 本番用（コメントアウト）
+  chain: "arbitrum"
   monitoring_interval: 2.0
 
-rpc:
-  arbitrum-sepolia:
-    url: "https://sepolia-rollup.arbitrum.io/rpc"   # 公式RPC（無料・簡単）
-    # url: "https://arb-sepolia.g.alchemy.com/v2/あなたのAlchemyキー"  # Alchemyを使う場合（高速）
-    ws_url: ""   # WebSocket（後で高速化用）
-
-  arbitrum:
-    url: "https://invictus.ambire.com/arbitrum"   # 本番RPC
-    ws_url: ""   # WebSocket（後で高速化用）
-
 trading:
-  price_difference_threshold: 0.3      # 価格差閾値 (%). これ以上で機会検知
-  min_profit_usd: 0.1                  # 最低期待利益 (USD)
-  max_slippage: 1.0                    # 許容スリッページ (%)
-  max_gas_price_gwei: 30               # 最大ガス価格
-  trade_amount_usd: 100.0              # 👈 NEW: 1回のスワップで動かす金額 (USD)
+  price_difference_threshold: 0.3
+  min_profit_usd: 0.1
+  max_slippage: 1.0
+  trade_amount_usd: 100.0
 
 risk_management:
-  max_drawdown_percent: 20.0           # 許容ドローダウン率 (%)
+  max_drawdown_percent: 20.0
   max_daily_loss_usd: 100
-  stop_on_consecutive_failures: 3      # 連続失敗回数
-
-pairs:
-  - "WETH/USDC"
-  - "WBTC/USDC"
-
-dexes:
-  uniswap_v3:
-    quoter_address: "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"  # Arbitrum Sepolia QuoterV2
-    router_address: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"
-  sushiswap:
-    quoter_address: "0x9c6522117e2ed1fE5bdb72bb0cd5E3b9c3f6e6f9"  # Arbitrum Mainnet SushiSwap V3 Quoter
-    router_address: "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506"
+  stop_on_consecutive_failures: 3
 
 telegram:
-  enabled: false                       # 本番時はtrueに
+  enabled: false
   chat_id: "YOUR_CHAT_ID"
   token: "YOUR_BOT_TOKEN"
 
 logging:
   level: "INFO"
   file: "logs/bot.log"
-
-rpc_settings:
-  max_consecutive_failures: 5     # RPC接続失敗の連続許容回数
-  reconnect_interval: 10          # 再接続試行間隔（秒） ※将来的に使用

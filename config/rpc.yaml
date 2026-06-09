@@ -1,0 +1,9 @@
+rpc:
+  arbitrum-sepolia:
+    url: "https://sepolia-rollup.arbitrum.io/rpc"
+  arbitrum:
+    url: "https://invictus.ambire.com/arbitrum"
+
+rpc_settings:
+  max_consecutive_failures: 5
+  reconnect_interval: 10

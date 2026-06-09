@@ -1,0 +1,19 @@
+# トークンのマスターデータ（汎用化用）
+tokens:
+  USDC:
+    address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+    decimals: 6
+  WETH:
+    address: "0x82af49447d8a07e3bd95bd0d56f35241523fbab1"
+    decimals: 18
+  WBTC:
+    address: "0x2f2a2543B76A4166549F7aaB2e75Bef0aefc5B0f"
+    decimals: 8
+  ARB:
+    address: "0x912CE59144191C1204E64559FE8253a0e49E6548"
+    decimals: 18
+
+# 監視するペア（上のトークン名を組み合わせて自由に設定）
+pairs:
+  - "WETH/USDC"
+  - "ARB/USDC"   # 👈 追加！

@@ -1,58 +1,39 @@
 import yaml
 import os
 from pathlib import Path
-from typing import Dict, Any
-import sys
 
-def load_config() -> Dict[str, Any]:
+def load_config(config_dir="config"):
     """
-    config.yaml を読み込む
-    - プロジェクトルートからの相対パスで探す
-    - 環境変数対応
+    指定されたディレクトリ内の複数のYAMLファイルを読み込み、
+    1つの大きな設定辞書に結合して返すローダー
     """
-    # プロジェクトルートの絶対パスを取得（実行場所に依存しない）
-    project_root = Path(__file__).parent.parent
-    config_path = project_root / "config" / "config.yaml"
+    base_path = Path(config_dir)
+    merged_config = {}
 
-    if not config_path.exists():
-        print(f"❌ エラー: 設定ファイルが見つかりません → {config_path}")
-        sys.exit(1)
+    # 読み込む分割ファイルのリスト
+    yaml_files = ["config.yaml", "tokens.yaml", "rpc.yaml", "dexes.yaml"]
 
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
+    for file_name in yaml_files:
+        file_path = base_path / file_name
+        if file_path.exists():
+            with open(file_path, "r", encoding="utf-8") as f:
+                try:
+                    data = yaml.safe_load(f)
+                    if data:
+                        # 辞書をマージ（上書き・追加）する
+                        merged_config.update(data)
+                except Exception as e:
+                    print(f"❌ 設定ファイル読み込みエラー ({file_name}): {e}")
+        else:
+            print(f"⚠️ 警告: 設定ファイル {file_name} が見つかりません。スキップします。")
 
-        if config is None:
-            raise ValueError("YAMLファイルが空です")
+    if not merged_config:
+        raise ValueError("❌ どの設定ファイルも正しく読み込めませんでした。")
 
-        # 環境変数で上書き（.env対応）
-        config = override_with_env(config)
+    return merged_config
 
-        # 簡単なバリデーション
-        validate_config(config)
-
-        print(f"✅ 設定ファイルを読み込みました: {config_path}")
-        return config
-
-    except Exception as e:
-        print(f"❌ 設定ファイル読み込みエラー: {e}")
-        sys.exit(1)
-
-
-def override_with_env(config: Dict) -> Dict:
-    """環境変数で設定を上書き（.env対応）"""
-    # 例: TELEGRAM_TOKEN が環境変数にあれば上書き
-    if os.getenv("TELEGRAM_TOKEN"):
-        if "telegram" not in config:
-            config["telegram"] = {}
-        config["telegram"]["token"] = os.getenv("TELEGRAM_TOKEN")
-
-    return config
-
-
-def validate_config(config: Dict):
-    """必須項目の簡易チェック"""
-    required = ["bot", "trading", "risk_management"]
-    for key in required:
-        if key not in config:
-            raise ValueError(f"必須セクション '{key}' がconfig.yamlにありません")
+# テスト用
+if __name__ == "__main__":
+    config = load_config()
+    print("✅ マージされた設定ファイル:")
+    print(config.keys())
