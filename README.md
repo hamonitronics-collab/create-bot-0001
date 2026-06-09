@@ -27,7 +27,8 @@ dex-arbitrage-bot/                  # プロジェクトルート
 │   │   ├── logger.py               # ログ管理
 │   │   └── telegram.py             # Telegram通知
 │   ├── chains/                     # 将来の複数チェーン対応用（空）
-│   ├── dex/                        # DEX抽象化用（空）
+│   ├── dex/                        # DEX抽象化用
+│   │   └── individual/             # 個別DEX詳細
 │   └── contracts/                  # コントラクト用（空）
 ├── tests/                          # テストコード（未作成）
 ├── logs/                           # ログ出力先（実行時に自動作成）
