@@ -1,6 +1,7 @@
 bot:
   chain: "arbitrum"
   monitoring_interval: 2.0
+  dry_run: True
 
 trading:
   price_difference_threshold: 0.3
@@ -21,3 +22,10 @@ telegram:
 logging:
   level: "INFO"
   file: "logs/bot.log"
+
+account:
+  address: "0x1F47749f0E4334909385350069280c4C0590d5Fa" # あなたのウォレットアドレス
+
+  # 自作スマートコントラクトの設定
+contract:
+  address: "0x1F47749f0E4334909385350069280c4C0590d5Fa" # 👈 ここにあなたが実際にデプロイしたコントラクトのアドレスを貼り付けます
