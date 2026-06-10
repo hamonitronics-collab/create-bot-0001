@@ -85,7 +85,7 @@ class OpportunityDetector:
                     else:
                         # 幻の利益だった場合は、裏でひっそりログを残す（デバッグ用）
                         if (buy_price - sell_price) / sell_price > self.threshold:
-                            self.logger.info(
+                            self.logger.debug(
                                 f"👻 [幻の利益を粉砕] {pair} | {buy_dex}➔{sell_dex} | "
                                 f"看板上は差があるが、往復すると赤字 (最終: ${final_usdc:.2f})"
                             )

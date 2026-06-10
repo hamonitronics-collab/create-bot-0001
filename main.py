@@ -90,10 +90,16 @@ class ArbitrageBot:
                 # ② 三角アビトラ（triangular）の処理
                 # ----------------------------------------------------
                 elif self.mode == "triangular":
-                    if not self.w3 or not (await asyncio.to_thread(self.w3.is_connected)):
+                    if not self.price_monitor.w3:
                         await self.price_monitor._connect_rpc()
-                        if not self.price_monitor.w3: return {}
-                    # 💡修正: self.detector ではなく self.triangular_detector を呼ぶ
+                        if not self.price_monitor.w3:
+                            await asyncio.sleep(self.monitoring_interval)
+                            continue
+
+                    # w3 インスタンスを main 側にも同期しておく
+                    self.w3 = self.price_monitor.w3
+
+                    # 💡 修正：安全になった detector を呼び出す
                     triangular_opps = await self.triangular_detector.detect_opportunities(self.price_monitor.dex_adapters)
 
                     if triangular_opps:

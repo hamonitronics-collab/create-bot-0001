@@ -2,7 +2,10 @@
 import time
 import asyncio
 
-semaphore = asyncio.Semaphore(1)
+# 💡 改善点1: 同時リクエスト数を制限するセマフォ
+# 1だと非常に安全（BANされない）ですが、ノードの強さに応じて 2 や 3 に調整しても構いません。
+rpc_semaphore = asyncio.Semaphore(1)
+
 class TriangularDetector:
     """
     3つの通貨を順番に両替して利益を狙う「三角アービトラージ」検知器
@@ -19,22 +22,18 @@ class TriangularDetector:
         self.logger.info(f"🧠 TriangularDetector initialized (min_profit: ${self.threshold})")
 
     async def detect_opportunities(self, dex_adapters: dict):
-        async def _checked_check(route, dex_name, adapter):
-            async with semaphore:
-                return await self._check_single_route(route, dex_name, adapter)
-
         routes = self.config.get('triangular_routes', [])
         if not routes:
             return []
 
         tasks = []
-        # 💡 修正1: 各ルート × 各DEX の調査を「タスク化」してリストにまとめる
+        # 各ルート × 各DEX の調査をタスク化
         for route in routes:
             for dex_name, adapter in dex_adapters.items():
-                tasks.append(_checked_check(route, dex_name, adapter))
+                # 💡 ここでは直接 _check_single_route を呼び出します（セマフォは関数側で細かく制御）
+                tasks.append(self._check_single_route(route, dex_name, adapter))
 
-        # 💡 修正2: 用意したすべてのタスクを「同時に（一斉に）」走らせる！
-        # これにより20秒かかっていた処理が、一番遅いDEXの応答時間(数秒)だけで終わります
+        # すべてのタスクを同時に並行実行
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         opportunities = []
@@ -65,26 +64,36 @@ class TriangularDetector:
         pair2 = f"{token2}/{token3}"
         pair3 = f"{token3}/{token1}"
 
+        # 💡 改善点2: RPC通信（get_price）を行う直前のみセマフォを適用し、STEPごとにわずかなウェイトを入れる
         try:
             # --- STEP 1 ---
             amount_in_wei_1 = int(self.trade_amount_usd * (10 ** dec1))
             params1 = {"amount_in": amount_in_wei_1, "quote_decimals": dec1, "base_decimals": dec2}
 
-            data1 = await asyncio.to_thread(adapter.get_price, pair1, addr1, addr2, params1)
+            async with rpc_semaphore:
+                data1 = await asyncio.to_thread(adapter.get_price, pair1, addr1, addr2, params1)
             if not data1: return None
             amount_out_wei_1 = data1["amount_out_wei"]
+
+            # 💡 わずかなインターバルを入れてRPCの連打を防止 (0.05秒〜0.1秒)
+            await asyncio.sleep(0.05)
 
             # --- STEP 2 ---
             params2 = {"amount_in": amount_out_wei_1, "quote_decimals": dec2, "base_decimals": dec3}
 
-            data2 = await asyncio.to_thread(adapter.get_price, pair2, addr2, addr3, params2)
+            async with rpc_semaphore:
+                data2 = await asyncio.to_thread(adapter.get_price, pair2, addr2, addr3, params2)
             if not data2: return None
             amount_out_wei_2 = data2["amount_out_wei"]
+
+            # 💡 わずかなインターバルを入れてRPCの連打を防止
+            await asyncio.sleep(0.05)
 
             # --- STEP 3 ---
             params3 = {"amount_in": amount_out_wei_2, "quote_decimals": dec3, "base_decimals": dec1}
 
-            data3 = await asyncio.to_thread(adapter.get_price, pair3, addr3, addr1, params3)
+            async with rpc_semaphore:
+                data3 = await asyncio.to_thread(adapter.get_price, pair3, addr3, addr1, params3)
             if not data3: return None
             amount_out_wei_3 = data3["amount_out_wei"]
 
@@ -113,7 +122,7 @@ class TriangularDetector:
                 )
                 return opp
             else:
-                self.logger.info(
+                self.logger.debug(
                     f"📉 [三角ルート] {dex_name} | {token1}➔{token2}➔{token3}➔{token1} | "
                     f"最終: ${final_usd:.4f} (利益: ${profit_usd:.4f})"
                 )
@@ -121,5 +130,5 @@ class TriangularDetector:
 
         except Exception as e:
             self.logger.error(f"❌ [{dex_name}] 三角ルート計算エラー ({route}): {e}")
-            await asyncio.sleep(1)  # エラーが続く場合の過負荷防止のため少し待機
+            await asyncio.sleep(1)  # エラーが続く場合の過負荷防止のため待機
             return None
