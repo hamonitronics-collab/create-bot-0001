@@ -154,7 +154,7 @@ class PriceMonitor:
 
         return prices
 
-    async def start_monitoring(self):
+    async def start_monitoring(self,strategy_name: str):
         self.is_running = True
         self.logger.info("Price monitoring started")
         #await self.telegram.send_message("🟢 PriceMonitor started")

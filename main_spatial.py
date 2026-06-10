@@ -18,7 +18,7 @@ class ArbitrageBot:
 
     def __init__(self):
         try:
-            self.config = load_config()
+            self.config = load_config("config_spatial.yaml")
 
             self.logger = BotLogger(self.config)
             self.telegram = TelegramNotifier(self.config, self.logger)
