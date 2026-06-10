@@ -22,4 +22,4 @@ telegram:
 
 logging:
   level: "INFO"
-  file: "logs/bot_triangular.log"
+  file: "bot_triangular"

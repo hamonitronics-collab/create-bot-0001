@@ -21,6 +21,7 @@ class BotLogger:
 
         logger = logging.getLogger("ArbitrageBot")
         logger.setLevel(level)
+        file_name = log_config.get('file', 'bot')
 
         # 既存ハンドラーをクリア（再初期化時の重複防止）
         if logger.handlers:
@@ -41,7 +42,7 @@ class BotLogger:
         log_dir = Path("logs")
         log_dir.mkdir(exist_ok=True)
         file_handler = logging.FileHandler(
-            log_dir / f"bot_{datetime.now().strftime('%Y%m%d')}.log",
+            log_dir / f"{file_name}_{datetime.now().strftime('%Y%m%d')}.log",
             encoding='utf-8'
         )
         file_handler.setFormatter(formatter)

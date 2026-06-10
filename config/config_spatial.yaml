@@ -22,6 +22,6 @@ telegram:
 
 logging:
   level: "INFO"
-  file: "logs/bot_spatial.log"
+  file: "bot_spatial"
 
 
