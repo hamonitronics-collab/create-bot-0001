@@ -1,67 +1,112 @@
 # src/core/triangular_detector.py
+import time
 
 class TriangularDetector:
-    def __init__(self, w3, logger, config):
-        self.w3 = w3
+    """
+    3つの通貨を順番に両替して利益を狙う「三角アービトラージ」検知器
+    """
+    def __init__(self, config, logger):
         self.logger = logger
         self.config = config
 
-        # 設定から最低利益率（しきい値）と基準通貨（USDCなど）を取得
         trading_config = self.config.get('trading', {})
-        self.threshold = trading_config.get('min_profit_usd', 0.1)
+        self.threshold = trading_config.get('min_profit_usd', 0.1) # 例: 0.1ドルの利益でGO
         self.base_currency = trading_config.get('base_currency', 'USDC')
         self.trade_amount_usd = trading_config.get('trade_amount_usd', 100.0)
 
         self.logger.info(f"🧠 TriangularDetector initialized (min_profit: ${self.threshold})")
 
     def detect_opportunities(self, dex_adapters: dict):
-        """
-        登録されたすべてのDEXに対して、三角アビトラのルートを総当たりで計算する
-        """
         routes = self.config.get('triangular_routes', [])
         if not routes:
-            self.logger.warning("⚠️ config.yaml に triangular_routes が設定されていません。")
             return []
 
         opportunities = []
 
-        # 1. 各ルート（例: USDC -> WETH -> ARB -> USDC）をループ
         for route in routes:
-            # 今回はルートの最初と最後が USDC（base_currency）であることを前提とします
+            # ルートの解体（例: USDC -> WETH -> ARB -> USDC）
             token1, token2, token3 = route
 
-            # 各区間のペア名を生成
-            pair1 = f"{token1}/{token2}" if token1 != self.base_currency else f"{token2}/{token1}"
-            pair2 = f"{token2}/{token3}" # ここは順番通りに作れない場合があるので後で調整が必要になるかも
-            pair3 = f"{token3}/{token1}" if token1 != self.base_currency else f"{token3}/{token1}"
+            # 各通貨のアドレスと小数点を取得
+            t1_info = self.config['tokens'].get(token1)
+            t2_info = self.config['tokens'].get(token2)
+            t3_info = self.config['tokens'].get(token3)
 
-            # 2. 登録されている各DEX（Uniswap等）でそのルートを試す
-            # （※本当は「DEX A -> DEX B -> DEX C」というDEXを跨ぐ三角も強いですが、
-            # まずは「1つのDEX内での三角（例：Uniswap内だけで回す）」から実装します）
+            if not t1_info or not t2_info or not t3_info:
+                continue
+
+            addr1 = t1_info['address']
+            addr2 = t2_info['address']
+            addr3 = t3_info['address']
+
+            dec1 = t1_info['decimals']
+            dec2 = t2_info['decimals']
+            dec3 = t3_info['decimals']
+
+            # ペア名の作成（ログ表示用）
+            pair1 = f"{token1}/{token2}"
+            pair2 = f"{token2}/{token3}"
+            pair3 = f"{token3}/{token1}"
+
+            # 今回は「単一のDEX内での三角アビトラ」を探す
             for dex_name, adapter in dex_adapters.items():
-                self.logger.debug(f"🔍 [{dex_name}] 三角ルート検索: {token1} ➔ {token2} ➔ {token3} ➔ {token1}")
-
                 try:
                     # --- STEP 1: token1 (USDC) -> token2 (WETH) ---
-                    # 100ドルをWETHに替える
-                    amount_in_wei_1 = int(self.trade_amount_usd * (10 ** self.config['tokens'][token1]['decimals']))
-                    params1 = {
-                        "amount_in": amount_in_wei_1,
-                        "quote_decimals": self.config['tokens'][token1]['decimals'],
-                        "base_decimals": self.config['tokens'][token2]['decimals']
-                    }
-                    addr1_in = self.config['tokens'][token1]['address']
-                    addr1_out = self.config['tokens'][token2]['address']
+                    amount_in_wei_1 = int(self.trade_amount_usd * (10 ** dec1))
+                    params1 = {"amount_in": amount_in_wei_1, "quote_decimals": dec1, "base_decimals": dec2}
 
-                    # get_priceは実効価格を返すので、獲得量を計算し直すか、アダプター側でamount_outを返すようにするか...
-                    # 現在のアダプターは実効価格（Price）を返す仕様なので、獲得量を算出します
-                    price1 = adapter.get_price(pair1, addr1_in, addr1_out, params1)
-                    if price1 == 0: continue
+                    data1 = adapter.get_price(pair1, addr1, addr2, params1)
+                    if not data1: continue
+                    amount_out_wei_1 = data1["amount_out_wei"] # 💡 手に入れたWETHの生データ
 
-                    # (USDC -> WETH の場合、price1は 1600 などの数字。獲得WETH = 投入USDC / price1)
-                    # ※ここの計算は通貨ペアの並び（WETH/USDCかUSDC/WETHか）によって割るか掛けるか変わるため、
-                    # 一番確実なのは、アダプター側から「実効価格」ではなく「獲得したトークン枚数（Wei）」を
-                    # 直接もらうことです。
+                    # --- STEP 2: token2 (WETH) -> token3 (ARB) ---
+                    # 💡 手に入れたWETHをそのまま次の引数に突っ込む！
+                    params2 = {"amount_in": amount_out_wei_1, "quote_decimals": dec2, "base_decimals": dec3}
+
+                    data2 = adapter.get_price(pair2, addr2, addr3, params2)
+                    if not data2: continue
+                    amount_out_wei_2 = data2["amount_out_wei"] # 💡 手に入れたARBの生データ
+
+                    # --- STEP 3: token3 (ARB) -> token1 (USDC) ---
+                    # 💡 手に入れたARBをそのまま次の引数に突っ込んでUSDCに戻す！
+                    params3 = {"amount_in": amount_out_wei_2, "quote_decimals": dec3, "base_decimals": dec1}
+
+                    data3 = adapter.get_price(pair3, addr3, addr1, params3)
+                    if not data3: continue
+                    amount_out_wei_3 = data3["amount_out_wei"] # 💡 最終的に手元に戻ってきたUSDCの生データ
+
+                    # --- 利益計算 ---
+                    # 最終的なUSDCを人間が読める数字（float）に戻す
+                    final_usd = amount_out_wei_3 / (10 ** dec1)
+                    profit_usd = final_usd - self.trade_amount_usd
+
+                    if profit_usd > self.threshold:
+                        opp = {
+                            "type": "triangular",
+                            "dex": dex_name,
+                            "route": route,
+                            "profit_usd": profit_usd,
+                            "invested_usd": self.trade_amount_usd,
+                            "final_usd": final_usd,
+                            # 実行時に必要なデータを全て保存
+                            "steps": [
+                                {"token_in": addr1, "token_out": addr2, "fee": data1["fee"], "amount_in": amount_in_wei_1},
+                                {"token_in": addr2, "token_out": addr3, "fee": data2["fee"], "amount_in": amount_out_wei_1},
+                                {"token_in": addr3, "token_out": addr1, "fee": data3["fee"], "amount_in": amount_out_wei_2},
+                            ],
+                            "timestamp": time.time()
+                        }
+                        self.logger.info(
+                            f"🔺 [三角アビトラ検知!!] {dex_name} | {token1}➔{token2}➔{token3}➔{token1} | "
+                            f"利益: ${profit_usd:.2f} (投入: ${self.trade_amount_usd:.2f} ➔ 最終: ${final_usd:.2f})"
+                        )
+                        opportunities.append(opp)
+                    else:
+                        # 利益が出なかった場合も、裏でこっそり結果を表示（デバッグ用）
+                        self.logger.debug(
+                            f"📉 [三角ルート] {dex_name} | {token1}➔{token2}➔{token3}➔{token1} | "
+                            f"最終: ${final_usd:.4f} (利益: ${profit_usd:.4f})"
+                        )
 
                 except Exception as e:
                     self.logger.error(f"❌ [{dex_name}] 三角ルート計算エラー ({route}): {e}")

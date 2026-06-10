@@ -3,6 +3,7 @@ from typing import Dict, Callable
 from datetime import datetime
 from web3 import Web3
 import importlib
+from .triangular_detector import TriangularDetector
 
 # 必要なクラスをインポート
 from ..utils.logger import BotLogger
@@ -25,6 +26,7 @@ class PriceMonitor:
         self.detector = OpportunityDetector(config, logger, telegram)
         self.profitability = ProfitabilityCalculator(config, logger, telegram)
         self.executor = Executor(config, logger, telegram)
+        self.triangular_detector = TriangularDetector(config, logger)
 
         self.dex_adapters = {}
 
@@ -121,14 +123,13 @@ class PriceMonitor:
 
             results_buy = await asyncio.gather(*tasks_buy, return_exceptions=True)
 
-# 往路で手に入る「最大枚数(Wei)」を計算（一番条件が良いDEXで買った場合の枚数）
+            # 往路で手に入る「最大枚数(Wei)」を計算（一番条件が良いDEXで買った場合の枚数）
             max_base_amount_wei = 0
             for i, res in enumerate(results_buy):
-                # 💡 修正1: 0以上の数字ではなく「Noneではない（辞書が返ってきた）」で判定
-                if not isinstance(res, Exception) and res is not None:
+                # 💡 究極防御: res が Exception ではなく、かつ「辞書(dict)である」ことだけを信用する！
+                if not isinstance(res, Exception) and isinstance(res, dict):
                     dex_data_buy[dex_names[i]] = res  # 辞書データをそのまま保存
 
-                    # 💡 修正2: 割り算による逆算を廃止！アダプターがくれた「本物のWei」を直接使う！
                     base_amount_wei = res["amount_out_wei"]
                     if base_amount_wei > max_base_amount_wei:
                         max_base_amount_wei = base_amount_wei
@@ -144,8 +145,8 @@ class PriceMonitor:
                 results_sell = await asyncio.gather(*tasks_sell, return_exceptions=True)
 
                 for i, res in enumerate(results_sell):
-                    # 💡 修正3: ここも None 判定に変更して辞書をそのまま保存
-                    if not isinstance(res, Exception) and res is not None:
+                    # 💡 究極防御: 復路も同様に「辞書(dict)」かどうかをチェック！
+                    if not isinstance(res, Exception) and isinstance(res, dict):
                         dex_data_sell[dex_names[i]] = res
 
             if dex_data_buy and dex_data_sell:
@@ -181,5 +182,11 @@ class PriceMonitor:
 
                         # メインループを邪魔させずにタスクを即時射出
                         asyncio.create_task(process_opportunity_async(opp))
+
+            # triangular_detector は get_prices を使わず、内部で直接アダプターを叩きます
+            triangular_opps = self.triangular_detector.detect_opportunities(self.dex_adapters)
+            if triangular_opps:
+                self.logger.warning(f"🔺 検知された三角機会: {len(triangular_opps)}件")
+                # (将来、ここに executor へ投げる処理を書きます)
 
             await asyncio.sleep(self.monitoring_interval)
