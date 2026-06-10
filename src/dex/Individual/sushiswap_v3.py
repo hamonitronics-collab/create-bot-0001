@@ -68,5 +68,13 @@ class SushiswapV3Adapter(BaseDEX):
             self.logger.info(f"📊 [{self.__class__.__name__}] 実効価格取得 [{pair} - Fee:{fee}]: {effective_price:.6f} (獲得量: {real_amount_out:.4f} {display_sym})")
             return float(effective_price)
         except Exception as e:
-            self.logger.error(f"❌ [{self.__class__.__name__}] Quoter見積もり失敗 [{pair} - Fee:{fee}]: {e}")
-            return 0.0
+            error_msg = str(e)
+            # DEX起因の正常なエラー（流動性なし・プール未作成）かどうかを判定
+            if "SPL" in error_msg or "execution reverted" in error_msg:
+                # 正常な動作なので debug で静かに隠す（画面には出さない）
+                self.logger.debug(f"⚠️ [{self.__class__.__name__}] プールなし/流動性不足 [{pair} - Fee:{fee}]")
+                return 0.0
+            else:
+                # 🔥 俺起因の可能性大！（アドレス間違い、RPCエラーなど）なので赤色で警告！
+                self.logger.error(f"🔥 [{self.__class__.__name__}] 【要確認】異常な見積もり失敗 [{pair} - Fee:{fee}]: {error_msg}")
+                return 0.0
