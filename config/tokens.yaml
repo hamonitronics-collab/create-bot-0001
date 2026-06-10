@@ -21,10 +21,16 @@ tokens:
   GMX:
     address: "0xfc5A1A6EB076a2C7aD06eD22C90d7E710E35ad0a"
     decimals: 18
-# 例：pairsの設定部分に以下のように並べるだけです
+
 pairs:
   - "WETH/USDC"
   - "ARB/USDC"
   - "PENDLE/USDC"  # 💡 追加！
   - "LDO/USDC"     # 💡 追加！
   - "GMX/USDC"     # 💡 追加！
+
+# --- 三角アビトラ用のルート設定 ---
+triangular_routes:
+  - ["USDC", "WETH", "ARB"]
+  - ["USDC", "WETH", "PENDLE"]
+  - ["USDC", "WETH", "LDO"]

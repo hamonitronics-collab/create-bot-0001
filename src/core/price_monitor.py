@@ -121,14 +121,15 @@ class PriceMonitor:
 
             results_buy = await asyncio.gather(*tasks_buy, return_exceptions=True)
 
-            # 往路で手に入る「最大枚数(Wei)」を計算（一番条件が良いDEXで買った場合の枚数）
+# 往路で手に入る「最大枚数(Wei)」を計算（一番条件が良いDEXで買った場合の枚数）
             max_base_amount_wei = 0
             for i, res in enumerate(results_buy):
-                if not isinstance(res, Exception) and res > 0:
-                    dex_data_buy[dex_names[i]] = res
-                    # 実効価格(res)から、手に入るBaseトークンの真の枚数を逆算
-                    real_amount_out = (amount_in_wei / (10**quote_decimals)) / res
-                    base_amount_wei = int(real_amount_out * (10**base_decimals))
+                # 💡 修正1: 0以上の数字ではなく「Noneではない（辞書が返ってきた）」で判定
+                if not isinstance(res, Exception) and res is not None:
+                    dex_data_buy[dex_names[i]] = res  # 辞書データをそのまま保存
+
+                    # 💡 修正2: 割り算による逆算を廃止！アダプターがくれた「本物のWei」を直接使う！
+                    base_amount_wei = res["amount_out_wei"]
                     if base_amount_wei > max_base_amount_wei:
                         max_base_amount_wei = base_amount_wei
 
@@ -143,7 +144,8 @@ class PriceMonitor:
                 results_sell = await asyncio.gather(*tasks_sell, return_exceptions=True)
 
                 for i, res in enumerate(results_sell):
-                    if not isinstance(res, Exception) and res > 0:
+                    # 💡 修正3: ここも None 判定に変更して辞書をそのまま保存
+                    if not isinstance(res, Exception) and res is not None:
                         dex_data_sell[dex_names[i]] = res
 
             if dex_data_buy and dex_data_sell:

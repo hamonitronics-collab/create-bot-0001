@@ -84,17 +84,17 @@ class BaseV3Adapter(BaseDEX):
             except Exception as e:
                 error_msg = str(e)
                 if "SPL" in error_msg or "execution reverted" in error_msg:
-                    self.logger.debug(f"⚠️ [{self.__class__.__name__}] 流動性不足スルー [{pair} - Fee:{fee}]")
+                    self.logger.debug(f"⚠️ [{self.__class__.__name__}][{self.dex_name}] 流動性不足スルー [{pair} - Fee:{fee}]")
                 else:
-                    self.logger.error(f"🔥 [{self.__class__.__name__}] 【要確認】見積もり異常 [{pair} - Fee:{fee}]: {error_msg}")
+                    self.logger.error(f"🔥 [{self.__class__.__name__}][{self.dex_name}] 【要確認】見積もり異常 [{pair} - Fee:{fee}]: {error_msg}")
                 continue
 
         if best_amount_out == 0:
-            self.logger.debug(f"⚠️ [{self.__class__.__name__}] 有効なプールなし [{pair}]")
-            return 0.0
+            self.logger.debug(f"⚠️ [{self.__class__.__name__}][{self.dex_name}] 有効なプールなし [{pair}]")
+            return None  # 💡 変更: 0.0 ではなくエラー判定しやすい None を返す
 
         real_amount_in = amount_in_wei / (10 ** quote_decimals)
-        real_amount_out = amount_out_val = real_amount_out = amount_out_val = best_amount_out / (10 ** base_decimals)
+        real_amount_out = best_amount_out / (10 ** base_decimals)
         effective_price = real_amount_in / real_amount_out
 
         base_sym, quote_sym = pair.split("/")
@@ -102,4 +102,11 @@ class BaseV3Adapter(BaseDEX):
         display_sym = base_sym if token_out.lower() == base_addr else quote_sym
 
         self.logger.info(f"📊 [{self.__class__.__name__}][{self.dex_name}] 最適レート取得 [{pair} - Fee:{best_fee}]: {effective_price:.6f} (獲得量: {real_amount_out:.4f} {display_sym})")
-        return float(effective_price)
+
+        # 💡 ここが最大の進化！生データ（Wei）を含めた辞書を返す
+        return {
+            "price": float(effective_price),
+            "amount_out_wei": int(best_amount_out),  # 次のDEXに渡すための生データ
+            "real_amount_out": float(real_amount_out),
+            "fee": best_fee
+        }

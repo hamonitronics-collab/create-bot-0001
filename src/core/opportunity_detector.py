@@ -34,25 +34,21 @@ class OpportunityDetector:
             if len(buy_prices) < 2 or len(sell_prices) < 2:
                 continue
 
-            # 全DEXの組み合わせ（Aで買ってBで売る）を総当たりで検証
-            for buy_dex, buy_price in buy_prices.items():
-                for sell_dex, sell_price in sell_prices.items():
+# 全DEXの組み合わせ（Aで買ってBで売る）を総当たりで検証
+            for buy_dex, buy_data in buy_prices.items():    # 💡 修正: 変数名を buy_data に
+                for sell_dex, sell_data in sell_prices.items(): # 💡 修正: 変数名を sell_data に
                     if buy_dex == sell_dex:
                         continue
 
-                    # 💡 往復見積もりロジック:
-                    # buy_price = 1 USDC あたりの獲得 Base トークン量（スリッページ考慮済）
-                    # sell_price = 1 Base トークンあたりの獲得 USDC 量（スリッページ考慮済）
-                    # したがって、1 USDC を投入した場合の最終的な手残り USDC は、
-                    # buy_price * sell_price となる。
-                    # ※ 注: get_price の戻り値の定義に依存します。現在の get_price は
-                    # effective_price = real_amount_in / real_amount_out を返しています。
-                    # これは「1 Base を買うのに必要な USDC」または「1 USDC を買うのに必要な Base」です。
+                    # 💡 修正: 辞書からそれぞれのデータを取り出す
+                    buy_price = buy_data["price"]
+                    sell_price = sell_data["price"]
+                    buy_amount_wei = buy_data["amount_out_wei"]
+                    sell_amount_wei = sell_data["amount_out_wei"]
+                    buy_fee = buy_data.get("fee", 500)
+                    sell_fee = sell_data.get("fee", 500)
 
                     # 【重要】現在の get_price の仕様に合わせた計算
-                    # buy_price (USDC -> ARB): 1 ARB を手に入れるための USDC コスト
-                    # sell_price (ARB -> USDC): 1 USDC を手に入れるための ARB コスト
-
                     # 100 USDC 投入した場合の獲得 ARB 数:
                     amount_in_usd = self.config.get('trading', {}).get('trade_amount_usd', 100.0)
                     obtained_base = amount_in_usd / buy_price
@@ -71,8 +67,13 @@ class OpportunityDetector:
                             "buy_price": buy_price,
                             "sell_price": sell_price,
                             "price_diff_pct": profit_ratio * 100, # 往復の真の利益率
-                            "buy_fee": 500 if "uniswap" in buy_dex else 3000, # 簡易的なFee付与
-                            "sell_fee": 500 if "uniswap" in sell_dex else 3000,
+
+                            # 🔥 修正: ハードコードを廃止し、取得したリアルFeeとWeiをセット！
+                            "buy_fee": buy_fee,
+                            "sell_fee": sell_fee,
+                            "buy_amount_wei": buy_amount_wei,
+                            "sell_amount_wei": sell_amount_wei,
+
                             "timestamp": time.time()
                         }
                         self.logger.info(

@@ -9,3 +9,14 @@ dexes:
     quoter_address: "0x0524e833ccd057e4d7a296e3aaab9f7675964ce1"
     module: "v3_base"
     class_name: "BaseV3Adapter"
+
+    # 💡 新規追加1：PancakeSwap V3 (Arbitrum公式)
+  pancakeswap_v3:
+    quoter_address: "0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997"
+    module: "v3_base"
+    class_name: "BaseV3Adapter"
+
+  camelot_v3:
+    quoter_address: "0x0fc73040b26E9bC8514fA028D998E73A254Fa76E"
+    module: "algebra_base"          # 先ほど作ったファイル名
+    class_name: "BaseAlgebraAdapter" # 先ほど作ったクラス名
