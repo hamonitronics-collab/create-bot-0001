@@ -30,45 +30,40 @@ class PriceMonitor:
 
     def _init_adapters(self):
         """
-        💡 【完全汎用化：プラグイン自動検出モード】
-        src/dex/Individual フォルダ内のファイルを全自動スキャンし、
-        定義されているDEXアダプタークラスを自動で発掘・ロードする。
+        💡 【究極のFactoryパターン：YAML完全駆動モード】
+        dexes.yaml の設定(module, class_name)を読み取り、
+        if文やフォルダ検索なしでDEXアダプターを全自動生成する。
         """
-        import os
-        from inspect import isclass
+        import importlib
 
-        # アダプターが格納されているディレクトリのパス
-        adapter_dir = os.path.join("src", "dex", "Individual")
-        if not os.path.exists(adapter_dir):
-            self.logger.error(f"❌ アダプターディレクトリが見つかりません: {adapter_dir}")
-            return
+        self.dex_adapters = {}
+        dex_configs = self.config.get('dexes', {})
 
-        # フォルダ内のファイルをループ処理
-        for file_name in os.listdir(adapter_dir):
-            # .py で終わり、__init__.py 以外のファイルを対象にする
-            if file_name.endswith(".py") and file_name != "__init__.py":
-                module_name = file_name[:-3]  # 拡張子の ".py" を取り除く (例: "sushiswap_v3")
-                full_module_path = f"src.dex.Individual.{module_name}"
+        # YAMLに書かれているDEX設定をループ処理
+        for dex_name, dex_info in dex_configs.items():
+            module_name = dex_info.get("module")
+            class_name = dex_info.get("class_name")
 
-                try:
-                    # ファイルを動的にインポート（ロード）
-                    module = importlib.import_module(full_module_path)
+            # YAMLにモジュールやクラス名の指定がない場合はスキップ
+            if not module_name or not class_name:
+                self.logger.warning(f"⚠️ {dex_name} は config に module と class_name がないためスキップします。")
+                continue
 
-                    # ロードしたファイルの中身（属性）をすべて検査
-                    for attr_name in dir(module):
-                        attr = getattr(module, attr_name)
+            try:
+                # 💡 ハック1: src/dex/ 配下の指定されたモジュール(v3_baseなど)を動的にインポート
+                full_module_path = f"src.dex.{module_name}"
+                module = importlib.import_module(full_module_path)
 
-                        # それが「クラス」であり、名前が「Adapter」で終わるものを自動発見
-                        if isclass(attr) and attr_name.endswith("Adapter") and attr_name != "BaseDEX":
+                # 💡 ハック2: そのモジュールの中から、指定されたクラス(BaseV3Adapterなど)を抽出
+                adapter_class = getattr(module, class_name)
 
-                            # 💡 yamlの設定（キー名）とファイル名が一致している場合のみ有効化
-                            # 例: module_nameが "sushiswap_v3" で、yamlにも "sushiswap_v3" があれば合致
-                            if module_name in self.config.get('dexes', {}):
-                                self.dex_adapters[module_name] = attr(self.w3, self.logger, self.config)
-                                self.logger.info(f"🚀 [ファイル自動検出] {file_name} から {attr_name} をハックしてロードしました！")
+                # 💡 ハック3: クラスを初期化！※ここで dex_name (uniswap_v3など) も第4引数として渡します！
+                self.dex_adapters[dex_name] = adapter_class(self.w3, self.logger, self.config, dex_name)
 
-                except Exception as e:
-                    self.logger.error(f"❌ ファイル {file_name} の自動ロード中にエラー: {e}")
+                self.logger.info(f"🚀 [YAML自動生成] {dex_name} を {class_name} ({module_name}.py) として起動しました！")
+
+            except Exception as e:
+                self.logger.error(f"❌ {dex_name} の動的ロード中にエラーが発生しました: {e}")
 
     async def _connect_rpc(self):
         """非同期でRPCに接続し、成功したらアダプターを初期化する"""

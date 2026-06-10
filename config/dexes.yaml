@@ -1,7 +1,11 @@
+# config/dexes.yaml
 dexes:
   uniswap_v3:
     quoter_address: "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"
-    router_address: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"
+    module: "v3_base"             # 💡使用するPythonファイル名（.pyは不要）
+    class_name: "BaseV3Adapter"   # 💡使用するクラス名
+
   sushiswap_v3:
     quoter_address: "0x0524e833ccd057e4d7a296e3aaab9f7675964ce1"
-    router_address: "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506"
+    module: "v3_base"
+    class_name: "BaseV3Adapter"
