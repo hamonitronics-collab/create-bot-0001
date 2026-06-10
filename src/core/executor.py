@@ -15,10 +15,11 @@ class Executor:
     アービトラージ機会を実行するモジュール
     自作スマートコントラクト（ArbitrageExecutor.sol）と通信し、オンチェーンで一撃スワップを完結させます。
     """
-    def __init__(self, config: dict, logger: BotLogger, telegram: TelegramNotifier):
+    def __init__(self, config: dict, logger: BotLogger, telegram: TelegramNotifier, mode: str = "spatial"):
         self.config = config
         self.logger = logger
         self.telegram = telegram
+        self.mode = mode
 
         # GitHubリポジトリの設定構造を維持
         self.chain = config['bot']['chain']
@@ -29,9 +30,11 @@ class Executor:
         self.dry_run = config['bot'].get('dry_run', True)
 
         # アカウント情報と秘密鍵のロード
-        self.account_address = self.w3.to_checksum_address(config['account']['address'])
+
         load_dotenv()
-        self.private_key = os.getenv('BOT_PRIVATE_KEY') or config['account'].get('private_key')
+        self.account_address = self.w3.to_checksum_address(os.getenv(f'account_{mode.lower()}'))
+        self.private_key = os.getenv(f'BOT_PRIVATE_KEY_{mode.lower()}')
+
 
         # コントラクト設定の動的ロード
         self.contract_address = config.get('contract', {}).get('address')

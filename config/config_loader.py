@@ -27,7 +27,7 @@ def load_config(strategy_yaml_name: str):
         else:
             print(f"⚠️ 警告: 設定ファイル {file_name} が見つかりません。スキップします。")
 
-    if not strategy_yaml_name:
+    if strategy_yaml_name:
         # 3. 指定された戦略固有の設定ファイル(spatialなど)で上書き(オーバーライド)
         strategy_path = base_path / strategy_yaml_name
         if strategy_path.exists():

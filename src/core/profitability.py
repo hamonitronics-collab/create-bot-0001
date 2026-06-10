@@ -52,7 +52,6 @@ class ProfitabilityCalculator:
                 self.logger.error(f"⚠️ 収益性計算スキップ: {pair} のリアルタイム生価格が不正です (buy:{buy_price}, sell:{sell_price})")
                 return None
 
-# src/core/profitability.py の calculate_profitability 内の後半部分を修正
 
             # === 1. 粗利・スリッページ・ガス代のUSD計算 ===
             # (この部分は変更なし)

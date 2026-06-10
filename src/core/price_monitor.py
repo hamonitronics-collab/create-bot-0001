@@ -154,7 +154,7 @@ class PriceMonitor:
 
         return prices
 
-    async def start_monitoring(self,strategy_name: str):
+    async def start_monitoring(self):
         self.is_running = True
         self.logger.info("Price monitoring started")
         #await self.telegram.send_message("🟢 PriceMonitor started")
@@ -182,11 +182,5 @@ class PriceMonitor:
 
                         # メインループを邪魔させずにタスクを即時射出
                         asyncio.create_task(process_opportunity_async(opp))
-
-            # triangular_detector は get_prices を使わず、内部で直接アダプターを叩きます
-            triangular_opps = self.triangular_detector.detect_opportunities(self.dex_adapters)
-            if triangular_opps:
-                self.logger.warning(f"🔺 検知された三角機会: {len(triangular_opps)}件")
-                # (将来、ここに executor へ投げる処理を書きます)
 
             await asyncio.sleep(self.monitoring_interval)

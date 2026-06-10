@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import List, Dict
 
 from ..utils.logger import BotLogger
@@ -34,7 +35,7 @@ class OpportunityDetector:
             if len(buy_prices) < 2 or len(sell_prices) < 2:
                 continue
 
-# 全DEXの組み合わせ（Aで買ってBで売る）を総当たりで検証
+            # 全DEXの組み合わせ（Aで買ってBで売る）を総当たりで検証
             for buy_dex, buy_data in buy_prices.items():    # 💡 修正: 変数名を buy_data に
                 for sell_dex, sell_data in sell_prices.items(): # 💡 修正: 変数名を sell_data に
                     if buy_dex == sell_dex:
@@ -84,7 +85,7 @@ class OpportunityDetector:
                     else:
                         # 幻の利益だった場合は、裏でひっそりログを残す（デバッグ用）
                         if (buy_price - sell_price) / sell_price > self.threshold:
-                            self.logger.debug(
+                            self.logger.info(
                                 f"👻 [幻の利益を粉砕] {pair} | {buy_dex}➔{sell_dex} | "
                                 f"看板上は差があるが、往復すると赤字 (最終: ${final_usdc:.2f})"
                             )
