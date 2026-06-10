@@ -7,16 +7,15 @@ class BaseV3Adapter(BaseDEX):
     Uniswap V3 と同じ構造を持つすべてのDEX（Sushi, Pancake等）で
     使い回せる共通の「V3型アダプター」の親クラス
     """
-    def __init__(self, w3: Web3, logger, config: dict):
-        # 自動ロードが要求する3つの引数だけで初期化できるようにする
+    # 💡 修正箇所：一番右に `dex_name: str` を追加！
+    def __init__(self, w3: Web3, logger, config: dict, dex_name: str):
         super().__init__(w3, logger, config)
 
-        # quoter_address は子クラスの init 内で self.quoter_address としてセットされた後に
-        # コントラクト化するため、ここでは枠だけ用意するか、初期化を遅延させます。
+        # 投げられてきた名前（uniswap_v3など）を自分の中に記憶
+        self.dex_name = dex_name
         self.quoter_address = None
         self.quoter_contract = None
 
-        # 全V3系DEXで共通の QuoterV2 ABI
         self.quoter_abi = [{
             "inputs": [{
                 "components": [
@@ -40,6 +39,13 @@ class BaseV3Adapter(BaseDEX):
             "stateMutability": "nonpayable",
             "type": "function"
         }]
+
+        # 💡 YAMLから直接自分の名前を使ってアドレスを取得し、即座に初期化！
+        quoter_address = config.get('dexes', {}).get(self.dex_name, {}).get('quoter_address')
+        if not quoter_address:
+            raise ValueError(f"❌ dexes.yaml に {self.dex_name} の quoter_address が設定されていません！")
+
+        self._init_quoter(quoter_address)
 
     def _init_quoter(self, address: str):
         """子クラスから住所を受け取って Quoter コントラクトを結ぶためのヘルパー"""
@@ -95,5 +101,5 @@ class BaseV3Adapter(BaseDEX):
         base_addr = self.config['tokens'][base_sym]['address'].lower()
         display_sym = base_sym if token_out.lower() == base_addr else quote_sym
 
-        self.logger.info(f"📊 [{self.__class__.__name__}] 最適レート取得 [{pair} - Fee:{best_fee}]: {effective_price:.6f} (獲得量: {real_amount_out:.4f} {display_sym})")
+        self.logger.info(f"📊 [{self.__class__.__name__}][{self.dex_name}] 最適レート取得 [{pair} - Fee:{best_fee}]: {effective_price:.6f} (獲得量: {real_amount_out:.4f} {display_sym})")
         return float(effective_price)
