@@ -4,7 +4,7 @@ import asyncio
 
 # 💡 改善点1: 同時リクエスト数を制限するセマフォ
 # 1だと非常に安全（BANされない）ですが、ノードの強さに応じて 2 や 3 に調整しても構いません。
-rpc_semaphore = asyncio.Semaphore(2)
+rpc_semaphore = asyncio.Semaphore(4)
 
 class TriangularDetector:
     """
@@ -127,9 +127,13 @@ class TriangularDetector:
                 return calc_result
             else:
                 net_profit = calc_result['net_profit_usd'] if calc_result else (final_usd - self.trade_amount_usd)
+
+                # 💡 修正: Gweiの表示も追加！
+                gas_info = f" | ガス代: ${calc_result['estimated_gas_usd']:.4f} (Gas Price: {calc_result.get('gas_price_gwei', 0.0):.2f} Gwei)" if calc_result else ""
+
                 self.logger.info(
                     f"📉 [三角ルート] {dex_name} | {token1}➔{token2}➔{token3}➔{token1} | "
-                    f"最終: ${final_usd:.4f} (純利益: ${net_profit:.4f})"
+                    f"最終: ${final_usd:.4f} (純利益: ${net_profit:.4f}{gas_info})"
                 )
                 return None
 

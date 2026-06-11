@@ -22,10 +22,19 @@ class ProfitabilityCalculator:
         self.max_slippage = trading.get('max_slippage', 0.5)
         self.trade_amount_usd = trading.get('trade_amount_usd', 100.0)
 
+        # 💡 追加: 動的ガス代を保持する変数
+        self.dynamic_gas_usd = None
+        self.dynamic_gas_price_gwei = None
+
         self.w3 = None
         self._connect_web3()
 
         self.logger.info(f"ProfitabilityCalculator initialized (min_profit: ${self.min_profit_usd}, trade_amount: ${self.trade_amount_usd})")
+
+    # 💡 追加: main.py から毎秒最新のガス代を受け取る窓口
+    def set_dynamic_gas_usd(self, gas_usd: float, gas_price_gwei: float = 0.0):
+        self.dynamic_gas_usd = gas_usd
+        self.dynamic_gas_price_gwei = gas_price_gwei
 
     def _connect_web3(self):
         try:
@@ -42,8 +51,6 @@ class ProfitabilityCalculator:
             price_diff_percent = opportunity.get('price_diff_percent', 0.0)
             pair = opportunity.get('pair', 'UNKNOWN')
 
-            # 💡 解決：Detectorから正規ルートで100%生価格が回ってくるため、
-            # 「39291.0」などのダミーの生数値は一切不要になりました！クリーンに取得します。
             buy_price = opportunity.get('buy_price', 0.0)
             sell_price = opportunity.get('sell_price', 0.0)
 
@@ -52,9 +59,7 @@ class ProfitabilityCalculator:
                 self.logger.error(f"⚠️ 収益性計算スキップ: {pair} のリアルタイム生価格が不正です (buy:{buy_price}, sell:{sell_price})")
                 return None
 
-
             # === 1. 粗利・スリッページ・ガス代のUSD計算 ===
-            # (この部分は変更なし)
             gross_profit_usd = self.trade_amount_usd * (price_diff_percent / 100)
             slippage_loss_usd = self.trade_amount_usd * ((self.max_slippage / 2) / 100)
 
@@ -77,27 +82,21 @@ class ProfitabilityCalculator:
             quote_decimals = self.config['tokens'][quote_symbol]['decimals']
 
             # === 2. 🛡️ サンドイッチ防御壁：amountOutMin（最低保証量）の算出 ===
-            # ① 1ステップ目（買い: Quote(USDC) ➔ Base(ARBなど)）
-            # 投入USDCを Decimals に合わせて Wei 化
             buy_amount_in_raw = int(self.trade_amount_usd * 10**quote_decimals)
             expected_token_out = buy_amount_in_raw / buy_price
 
-            # 受け取る Base トークンの Decimals に合わせて Wei 化
             buy_expected_out_wei = int(expected_token_out * (10**(base_decimals - quote_decimals)))
             buy_min_amount_out = int(buy_expected_out_wei * (1 - (self.max_slippage / 100)))
 
-            # ② 2ステップ目（売り: Base(ARBなど) ➔ Quote(USDC)）
             sell_amount_in_wei = buy_expected_out_wei
             expected_quote_out = (sell_amount_in_wei / 10**base_decimals) * sell_price
 
-            # 最終的に受け取る USDC の Decimals に合わせて Wei 化
             sell_expected_out_raw = int(expected_quote_out * 10**quote_decimals)
             sell_min_amount_out = int(sell_expected_out_raw * (1 - (self.max_slippage / 100)))
             # =================================================================
 
             result = {
                 **opportunity,
-                # (以下の戻り値は変更なし)
                 "trade_amount_usd": self.trade_amount_usd,
                 "estimated_profit_usd": round(net_profit_usd, 3),
                 "is_profitable": is_profitable,
@@ -135,9 +134,12 @@ class ProfitabilityCalculator:
             # 1. 粗利益の計算
             gross_profit_usd = final_usd - invested_usd
 
-            # 2. ガス代の取得（configから取得。設定がなければ5.0ドル）
+            # 💡 2. ガス代の取得（動的ガス代がセットされていれば最優先で使い、なければ固定値）
             trading_config = self.config.get('trading', {})
-            estimated_gas_usd = trading_config.get('estimated_gas_usd', 5.0)
+            if self.dynamic_gas_usd is not None:
+                estimated_gas_usd = self.dynamic_gas_usd
+            else:
+                estimated_gas_usd = trading_config.get('estimated_gas_usd', 5.0)
 
             # 3. スリッページによる損失見込み（3回スワップ分を保守的に計算）
             slippage_loss_usd = invested_usd * ((self.max_slippage / 2) / 100) * 3
@@ -152,7 +154,8 @@ class ProfitabilityCalculator:
             result = {
                 **opportunity,
                 "gross_profit_usd": round(gross_profit_usd, 3),
-                "estimated_gas_usd": estimated_gas_usd,
+                "estimated_gas_usd": round(estimated_gas_usd, 3),
+                "gas_price_gwei": round(self.dynamic_gas_price_gwei or 0.0, 2),  # 💡 ここを追加！
                 "slippage_loss_usd": round(slippage_loss_usd, 3),
                 "net_profit_usd": round(net_profit_usd, 3),
                 "is_profitable": is_profitable

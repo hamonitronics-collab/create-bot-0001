@@ -10,6 +10,7 @@ trading:
   trade_amount_usd: 100.0
   priority_fee: 2.0
   estimated_gas_usd: 5.0  # 💡追加: 3回分のガス代の目安（ドル）
+  estimated_gas_limit: 1500000
 
 risk_management:
   max_drawdown_percent: 20.0

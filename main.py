@@ -90,6 +90,9 @@ class ArbitrageBot:
                 # ----------------------------------------------------
                 # ② 三角アビトラ（triangular）の処理
                 # ----------------------------------------------------
+                # ----------------------------------------------------
+                # ② 三角アビトラ（triangular）の処理
+                # ----------------------------------------------------
                 elif self.mode == "triangular":
                     if not self.price_monitor.w3:
                         await self.price_monitor._connect_rpc()
@@ -100,7 +103,39 @@ class ArbitrageBot:
                     # w3 インスタンスを main 側にも同期しておく
                     self.w3 = self.price_monitor.w3
 
-                    # 💡 修正：安全になった detector を呼び出す
+                    # 💡 【追加】現在のネットワークのガス代を動的に計算してセットする
+                    try:
+                        # ガス価格をWeiで取得
+                        gas_price_wei = await asyncio.to_thread(lambda: self.w3.eth.gas_price)
+
+                        # 最初のアダプターを使ってWETH/USDC価格を取得し、ETHのドル価格を出す
+                        first_dex = list(self.price_monitor.dex_adapters.values())[0]
+                        weth_addr = self.config['tokens']['WETH']['address']
+                        usdc_addr = self.config['tokens']['USDC']['address']
+
+                        params = {"amount_in": 10**18, "quote_decimals": 18, "base_decimals": 6}
+                        eth_price_data = await asyncio.to_thread(first_dex.get_price, "WETH/USDC", weth_addr, usdc_addr, params)
+
+                        if eth_price_data:
+                            eth_price_usd = eth_price_data['amount_out_wei'] / (10**6)
+                            gas_limit = self.config.get('trading', {}).get('estimated_gas_limit', 1500000)
+
+                           # ガス代（USD）を算出
+                            dynamic_gas_usd = (gas_price_wei * gas_limit / (10**18)) * eth_price_usd
+
+                            # 💡 【追加】WeiをGwei（10億分の1）に変換
+                            gas_price_gwei = gas_price_wei / (10**9)
+
+                            # 💡 profitabilityに最新のガス代とGweiの両方を教える！
+                            self.profitability.set_dynamic_gas_usd(dynamic_gas_usd, gas_price_gwei)
+                        else:
+                            self.logger.warning("⚠️ 動的ガス計算: WETHの価格取得に失敗しました")
+
+                    except Exception as e:
+                        # 💡 エラーを隠さずログに出力して犯人を特定する！
+                        self.logger.error(f"❌ 動的ガス計算エラー: {e}")
+
+                    # 💡 安全になった detector を呼び出す
                     triangular_opps = await self.triangular_detector.detect_opportunities(self.price_monitor.dex_adapters)
 
                     if triangular_opps:
