@@ -23,11 +23,6 @@ class PriceMonitor:
         self.is_running = False
         self.w3 = None
 
-        self.detector = OpportunityDetector(config, logger, telegram)
-        self.profitability = ProfitabilityCalculator(config, logger, telegram)
-        self.executor = Executor(config, logger, telegram)
-        self.triangular_detector = TriangularDetector(config, logger)
-
         self.dex_adapters = {}
 
     def _init_adapters(self):

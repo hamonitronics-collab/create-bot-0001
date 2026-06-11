@@ -123,3 +123,43 @@ class ProfitabilityCalculator:
         except Exception as e:
             self.logger.error(f"収益性計算エラー: {e}")
             return None
+
+    def calculate_triangular_profitability(self, opportunity: Dict) -> Optional[Dict]:
+        """
+        💡 三角アビトラ機会の収益性を正確に計算（ガス代・スリッページ考慮）
+        """
+        try:
+            invested_usd = opportunity.get('invested_usd', 0.0)
+            final_usd = opportunity.get('final_usd', 0.0)
+
+            # 1. 粗利益の計算
+            gross_profit_usd = final_usd - invested_usd
+
+            # 2. ガス代の取得（configから取得。設定がなければ5.0ドル）
+            trading_config = self.config.get('trading', {})
+            estimated_gas_usd = trading_config.get('estimated_gas_usd', 5.0)
+
+            # 3. スリッページによる損失見込み（3回スワップ分を保守的に計算）
+            slippage_loss_usd = invested_usd * ((self.max_slippage / 2) / 100) * 3
+
+            # 4. 純利益の計算
+            net_profit_usd = gross_profit_usd - estimated_gas_usd - slippage_loss_usd
+
+            # 純利益が最低目標(min_profit_usd)を超えているか判定
+            is_profitable = net_profit_usd >= self.min_profit_usd
+
+            # 計算結果を元のデータにくっつけて返す
+            result = {
+                **opportunity,
+                "gross_profit_usd": round(gross_profit_usd, 3),
+                "estimated_gas_usd": estimated_gas_usd,
+                "slippage_loss_usd": round(slippage_loss_usd, 3),
+                "net_profit_usd": round(net_profit_usd, 3),
+                "is_profitable": is_profitable
+            }
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"❌ 三角アビトラ収益性計算エラー: {e}")
+            return None

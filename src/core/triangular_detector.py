@@ -4,15 +4,16 @@ import asyncio
 
 # 💡 改善点1: 同時リクエスト数を制限するセマフォ
 # 1だと非常に安全（BANされない）ですが、ノードの強さに応じて 2 や 3 に調整しても構いません。
-rpc_semaphore = asyncio.Semaphore(1)
+rpc_semaphore = asyncio.Semaphore(2)
 
 class TriangularDetector:
     """
     3つの通貨を順番に両替して利益を狙う「三角アービトラージ」検知器
     """
-    def __init__(self, config, logger):
+    def __init__(self, config, logger, profitability_calc):
         self.logger = logger
         self.config = config
+        self.profit_calc = profitability_calc
 
         trading_config = self.config.get('trading', {})
         self.threshold = trading_config.get('min_profit_usd', 0.1)
@@ -99,32 +100,36 @@ class TriangularDetector:
 
             # --- 利益計算 ---
             final_usd = amount_out_wei_3 / (10 ** dec1)
-            profit_usd = final_usd - self.trade_amount_usd
 
-            if profit_usd > self.threshold:
-                opp = {
-                    "type": "triangular",
-                    "dex": dex_name,
-                    "route": route,
-                    "profit_usd": profit_usd,
-                    "invested_usd": self.trade_amount_usd,
-                    "final_usd": final_usd,
-                    "steps": [
-                        {"token_in": addr1, "token_out": addr2, "fee": data1["fee"], "amount_in": amount_in_wei_1},
-                        {"token_in": addr2, "token_out": addr3, "fee": data2["fee"], "amount_in": amount_out_wei_1},
-                        {"token_in": addr3, "token_out": addr1, "fee": data3["fee"], "amount_in": amount_out_wei_2},
-                    ],
-                    "timestamp": time.time()
-                }
+            # 💡 単純な引き算をやめ、まずは基本データをまとめる
+            raw_opp = {
+                "type": "triangular",
+                "dex": dex_name,
+                "route": route,
+                "invested_usd": self.trade_amount_usd,
+                "final_usd": final_usd,
+                "steps": [
+                    {"token_in": addr1, "token_out": addr2, "fee": data1["fee"], "amount_in": amount_in_wei_1},
+                    {"token_in": addr2, "token_out": addr3, "fee": data2["fee"], "amount_in": amount_out_wei_1},
+                    {"token_in": addr3, "token_out": addr1, "fee": data3["fee"], "amount_in": amount_out_wei_2},
+                ],
+                "timestamp": time.time()
+            }
+
+            # 💡 先ほど作った計算機に判定させる
+            calc_result = self.profit_calc.calculate_triangular_profitability(raw_opp)
+
+            if calc_result and calc_result["is_profitable"]:
                 self.logger.warning(
                     f"🔺 [三角アビトラ検知!!] {dex_name} | {token1}➔{token2}➔{token3}➔{token1} | "
-                    f"利益: ${profit_usd:.2f} (投入: ${self.trade_amount_usd:.2f} ➔ 最終: ${final_usd:.2f})"
+                    f"純利益: ${calc_result['net_profit_usd']:.2f} (粗利: ${calc_result['gross_profit_usd']:.2f} - ガス代: ${calc_result['estimated_gas_usd']:.2f})"
                 )
-                return opp
+                return calc_result
             else:
-                self.logger.debug(
+                net_profit = calc_result['net_profit_usd'] if calc_result else (final_usd - self.trade_amount_usd)
+                self.logger.info(
                     f"📉 [三角ルート] {dex_name} | {token1}➔{token2}➔{token3}➔{token1} | "
-                    f"最終: ${final_usd:.4f} (利益: ${profit_usd:.4f})"
+                    f"最終: ${final_usd:.4f} (純利益: ${net_profit:.4f})"
                 )
                 return None
 

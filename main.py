@@ -40,8 +40,9 @@ class ArbitrageBot:
                 stop_callback=self.stop_bot
             )
             self.detector = OpportunityDetector(self.config, self.logger, self.telegram)
-            self.triangular_detector = TriangularDetector(self.config, self.logger)
             self.profitability = ProfitabilityCalculator(self.config, self.logger, self.telegram)
+            self.triangular_detector = TriangularDetector(self.config, self.logger, self.profitability) # 💡ここに足す！
+
             self.executor = Executor(self.config, self.logger, self.telegram, self.mode)
 
             # configから監視間隔を取得（なければデフォルト2.0秒）
