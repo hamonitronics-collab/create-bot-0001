@@ -30,11 +30,9 @@ class Executor:
         self.dry_run = config['bot'].get('dry_run', True)
 
         # アカウント情報と秘密鍵のロード
-
         load_dotenv()
         self.account_address = self.w3.to_checksum_address(os.getenv(f'account_{mode.lower()}'))
         self.private_key = os.getenv(f'BOT_PRIVATE_KEY_{mode.lower()}')
-
 
         # コントラクト設定の動的ロード
         self.contract_address = config.get('contract', {}).get('address')
@@ -72,21 +70,59 @@ class Executor:
         except Exception as e:
             self.logger.error(f"❌ コントラクトABIの読み込みに失敗: {e}")
 
-    # 💡 修正点：関数に「async」を付与して非同期対応にする
+    # 💡 関数に「async」を付与して非同期対応済み
     async def execute(self, opportunity_calc: dict):
         """
         監視エンジンから検知された機会を受け取り、
         自作スマートコントラクトの executeArbitrage 関数をオンチェーンで実行する
         """
+
+        # =========================================================
+        # 🚀 【新規追加】 三角アービトラージ（Triangular）の実行ルート
+        # =========================================================
+        if opportunity_calc.get("type") == "triangular":
+            try:
+                dex = opportunity_calc.get("dex")
+                route = opportunity_calc.get("route")
+                net_profit = opportunity_calc.get("net_profit_usd")
+                steps = opportunity_calc.get("steps", [])
+                final_usd = opportunity_calc.get("final_usd", 0.0)
+
+                self.logger.warning(
+                    f"🔥 [Executor発動!!] 三角アビトラ本番取引シミュレーションを開始します...\n"
+                    f"  DEX: {dex} | ルート: {' ➔ '.join(route)}\n"
+                    f"  見込み純利益: ${net_profit:.2f}\n"
+                    f"  STEP1: {steps[0]['amount_in']} wei 投入 ➔ STEP3獲得期待量: ${final_usd:.4f}"
+                )
+
+                # 🛡️ 本番送信の安全弁（まずはシミュレーションとしてログと通知のみ）
+                self.logger.info(f"🐳 [シミュレーション成功] スマートコントラクトへの三角スワップ関数呼び出し準備完了 (安全のためトランザクション送信はスキップ)")
+
+                # スマホ（Telegram）に熱い通知を飛ばす！
+                #await self.telegram.send_message(
+                #    f"🔔 **[三角アビトラ実行シミュレーション]**\n"
+                #    f"DEX: `{dex}`\n"
+                #    f"Route: `{' ➔ '.join(route)}`\n"
+                #    f"Net Profit: `${net_profit:.2f}`"
+                #)
+                return True
+            except Exception as e:
+                self.logger.error(f"❌ 三角アビトラ実行シミュレーション中にエラー: {e}")
+                return False
+        # =========================================================
+
+        # =========================================================
+        # 🚀 既存の 空間アービトラージ（Spatial）の実行ルート
+        # =========================================================
         if not self.contract:
-            self.logger.error("❌ コントラクトが初期化されていないため、実行をスキップします。")
+            self.logger.error("❌ コントラクトが初期化されていないため、空間アビトラ実行をスキップします。")
             return
 
-        # 💡 修正：送られてきた辞書データをそのまま opp として扱う！（保険の get も追加）
+        # 送られてきた辞書データをそのまま opp として扱う！（保険の get も追加）
         opp = opportunity_calc.get("opportunity", opportunity_calc)
         pair = opp.get("pair", "")
 
-        # 💡 安全対策：もし pair が空だったり "/" が無い変なデータならここで弾く
+        # 安全対策：もし pair が空だったり "/" が無い変なデータならここで弾く
         if not pair or "/" not in pair:
             self.logger.error(f"❌ ペア情報が正しく取得できませんでした。実行をスキップします: {opp}")
             return
@@ -95,7 +131,6 @@ class Executor:
         base_sym, quote_sym = pair.split("/")
         tokens_config = self.config.get('tokens', {})
 
-        # --- (これ以降の config 読み込みやトランザクション処理はそのまま変更なし！) ---
         if quote_sym not in tokens_config or base_sym not in tokens_config:
             self.logger.error(f"❌ トークン設定が config に不足しています: {pair}")
             return
@@ -103,7 +138,7 @@ class Executor:
         token_in_address = self.w3.to_checksum_address(tokens_config[quote_sym]['address'])
         token_out_address = self.w3.to_checksum_address(tokens_config[base_sym]['address'])
 
-        # 💡 修正点：YAMLの記述に合わせて「trading.trade_amount_usd」から動的に金額を取得するよう修正！
+        # YAMLの記述に合わせて金額を動的取得
         decimals = tokens_config[quote_sym].get('decimals', 6)
         trade_amount_dollars = self.config['trading'].get('trade_amount_usd', 100.0)
         amount_in = int(trade_amount_dollars * (10 ** decimals))
@@ -138,7 +173,7 @@ class Executor:
             return
 
         try:
-            # 💡 修正点：通信ブロックを防ぐため、イベントループを取得して非同期スレッドに逃がす
+            # 通信ブロックを防ぐため、イベントループを取得して非同期スレッドに逃がす
             loop = asyncio.get_event_loop()
 
             nonce = self.w3.eth.get_transaction_count(self.account_address)
@@ -158,7 +193,7 @@ class Executor:
 
             self.logger.warning("🚀 トランザクションをメインネットへパブリッシュ中...")
 
-            # 💡 修正点：send と wait_for_receipt を非同期実行に変え、メインループを絶対に止めないようにする！
+            # send と wait_for_receipt を非同期実行に変え、メインループを絶対に止めない
             tx_hash = await loop.run_in_executor(None, lambda: self.w3.eth.send_raw_transaction(signed_tx.rawTransaction))
             self.logger.info(f"⏳ オンチェーン承認待ち... TxHash: {tx_hash.hex()}")
 

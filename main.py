@@ -135,12 +135,23 @@ class ArbitrageBot:
                         # 💡 エラーを隠さずログに出力して犯人を特定する！
                         self.logger.error(f"❌ 動的ガス計算エラー: {e}")
 
-                    # 💡 安全になった detector を呼び出す
+                    # 安全になった detector を呼び出す
                     triangular_opps = await self.triangular_detector.detect_opportunities(self.price_monitor.dex_adapters)
 
                     if triangular_opps:
                         self.logger.warning(f"🔺 検知された三角機会: {len(triangular_opps)}件")
-                        # (将来、ここに executor へ投げる処理を書きます)
+
+                        # 💡 修正：見つかった儲かるルートをループで回して、Executorへ非同期で投げる！
+                        for opp in triangular_opps:
+                            async def process_triangular_opportunity_async(opp_data):
+                                try:
+                                    # 実行部（Executor）の execute メソッドを呼び出す
+                                    await self.executor.execute(opp_data)
+                                except Exception as e:
+                                    self.logger.error(f"❌ 三角アビトラ実行タスクエラー: {e}")
+
+                            # バックグラウンドで超高速に処理を実行
+                            asyncio.create_task(process_triangular_opportunity_async(opp))
 
                 # ----------------------------------------------------
                 # ループの最後に指定秒数だけ待機

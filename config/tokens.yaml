@@ -33,4 +33,5 @@ pairs:
 triangular_routes:
   - ["USDC", "WETH", "ARB"]
   - ["USDC", "WETH", "PENDLE"]
-  - ["USDC", "WETH", "LDO"]
+  - ["WETH", "ARB", "USDC"]  # 💡 逆回りルートも追加！
+  # (他にも知っているトークンがあれば、tokens.yamlにアドレスを足してここに追加できます)
