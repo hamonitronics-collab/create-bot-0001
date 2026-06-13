@@ -61,7 +61,7 @@ class Executor:
             if not json_path:
                 raise FileNotFoundError("ArbitrageExecutor.json が見つかりません。")
 
-            with open(json_path, "r") as f:
+            with open(json_path, "r", encoding='utf-8') as f:
                 contract_json = json.load(f)
                 abi = contract_json["abi"]
 

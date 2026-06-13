@@ -1,27 +1,25 @@
 bot:
   chain: "arbitrum"
-  monitoring_interval: 2.0
-  dry_run: True
+  monitoring_interval: 2.0      # 無料RPCなら2.0秒、有料RPCなら0.5秒に短縮してOK
+  dry_run: false                # 💡 本番なので false に変更！
 
 trading:
-  price_difference_threshold: 0.3
-  min_profit_usd: 0.1
-  max_slippage: 1.0
-  trade_amount_usd: 100.0
-  priority_fee: 2.0
+  price_difference_threshold: 0.4  # 💡 0.3 から 0.4 に引き上げ（手数料負けを防ぐため）
+  min_profit_usd: 0.3              # 💡 0.1 から 0.3 に引き上げ（ガス代負けを防ぐため）
+  max_slippage: 0.2                # 💡 1.0 から 0.2 に厳しく設定
+  trade_amount_usd: 100           # 💡 最初は 100 ではなく、入金した少額（10〜20）に合わせる
+  priority_fee: 1.0                # Arbitrumはガス代が安いので1.0で十分速い
 
 risk_management:
   max_drawdown_percent: 20.0
-  max_daily_loss_usd: 100
+  max_daily_loss_usd: 10           # 💡 運用資金に合わせて小さく設定
   stop_on_consecutive_failures: 3
 
 telegram:
-  enabled: false
-  chat_id: "YOUR_CHAT_ID"
-  token: "YOUR_BOT_TOKEN"
+  enabled: false                    # 💡 本番は必ず true にしてスマホで監視！
+  chat_id: "YOUR_CHAT_ID"          # ※自分のIDを設定
+  token: "YOUR_BOT_TOKEN"          # ※自分のトークンを設定
 
 logging:
-  level: "INFO"
+  level: "WARNING"
   file: "bot_spatial"
-
-

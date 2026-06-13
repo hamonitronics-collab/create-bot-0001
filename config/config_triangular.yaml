@@ -1,24 +1,24 @@
 bot:
   chain: "arbitrum"
   monitoring_interval: 2.0
-  dry_run: True
+  dry_run: false                 # 💡 本番なので false に変更！
 
 trading:
-  price_difference_threshold: 0.3
-  min_profit_usd: -10.0
-  max_slippage: 1.0
-  trade_amount_usd: 100.0
-  priority_fee: 2.0
-  estimated_gas_usd: 5.0  # 💡追加: 3回分のガス代の目安（ドル）
+  price_difference_threshold: 0.6  # 💡 0.3 から 0.6 に引き上げ（3回分の手数料負けを防ぐため）
+  min_profit_usd: 0.5              # 💡 -10.0 から 0.5 に変更（テスト設定から本物の利益設定へ）
+  max_slippage: 0.2                # 💡 1.0 から 0.2 に厳しく設定
+  trade_amount_usd: 7           # 💡 最初は入金した少額（10〜20）に合わせる
+  priority_fee: 1.0
+  estimated_gas_usd: 0.3           # 💡 5.0 から 0.3 に引き下げ（Arbitrumのリアルなガス代に合わせる）
   estimated_gas_limit: 1500000
 
 risk_management:
   max_drawdown_percent: 20.0
-  max_daily_loss_usd: 100
+  max_daily_loss_usd: 10           # 💡 運用資金に合わせて小さく設定
   stop_on_consecutive_failures: 3
 
 telegram:
-  enabled: false
+  enabled: false                    # 💡 スマホで成功の歓喜を味わうために true！
   chat_id: "YOUR_CHAT_ID"
   token: "YOUR_BOT_TOKEN"
 

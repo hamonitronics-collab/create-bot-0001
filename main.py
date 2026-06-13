@@ -48,7 +48,11 @@ class ArbitrageBot:
             # configから監視間隔を取得（なければデフォルト2.0秒）
             self.monitoring_interval = self.config.get('bot', {}).get('monitoring_interval', 2.0)
 
+            self.heartbeat_interval = self.config.get('monitor', {}).get('heart_beat_time', 300)
+
             self.logger.info("✅ ArbitrageBot initialized successfully")
+
+            self.last_heartbeat_time = datetime.now()
 
         except Exception as e:
             print(f"❌ 初期化エラー: {e}")
@@ -62,7 +66,7 @@ class ArbitrageBot:
     async def run(self):
         await self.telegram.send_message(f"🚀 **Arbitrage Bot Started ({self.mode} mode)**")
         self.logger.info(f"Bot main loop started in {self.mode} mode")
-
+        self.logger.warning("🟢 利益監視ループを開始しました。")
         try:
             while self.running:
                 # ----------------------------------------------------
@@ -87,9 +91,6 @@ class ArbitrageBot:
 
                                 asyncio.create_task(process_opportunity_async(opp))
 
-                # ----------------------------------------------------
-                # ② 三角アビトラ（triangular）の処理
-                # ----------------------------------------------------
                 # ----------------------------------------------------
                 # ② 三角アビトラ（triangular）の処理
                 # ----------------------------------------------------
@@ -153,6 +154,14 @@ class ArbitrageBot:
                             # バックグラウンドで超高速に処理を実行
                             asyncio.create_task(process_triangular_opportunity_async(opp))
 
+                # 💡 【ここから追加：生存報告（ハートビート）ロジック】
+                current_time = datetime.now()
+                # 前回の報告から「300秒（5分）」以上経っているかチェック
+                if (current_time - self.last_heartbeat_time).total_seconds() >= self.heartbeat_interval:
+                    # ログレベルを「warning」にすることで、configがWARNINGでも画面に表示される！
+                    self.logger.warning(f"💓 [生存報告] Botは正常に稼働中です。監視ループ継続中... (Interval: {self.heartbeat_interval}s)")
+                    # タイマーを現在の時間でリセット
+                    self.last_heartbeat_time = current_time
                 # ----------------------------------------------------
                 # ループの最後に指定秒数だけ待機
                 # ----------------------------------------------------

@@ -24,6 +24,14 @@ class PriceMonitor:
         self.w3 = None
 
         self.dex_adapters = {}
+        self.semaphore = asyncio.Semaphore(3)
+
+        self.last_heartbeat_time = datetime.now()
+
+    async def _safe_get_price(self, adapter, pair, token_in, token_out, params):
+        async with self.semaphore:
+            # セマフォの許可を得てから実行する
+            return await asyncio.to_thread(adapter.get_price, pair, token_in, token_out, params)
 
     def _init_adapters(self):
         """
@@ -114,7 +122,7 @@ class PriceMonitor:
             tasks_buy = []
             for dex_name, adapter in self.dex_adapters.items():
                 params_buy = {"amount_in": amount_in_wei, "quote_decimals": quote_decimals, "base_decimals": base_decimals}
-                tasks_buy.append(asyncio.to_thread(adapter.get_price, pair, token_quote, token_base, params_buy))
+                tasks_buy.append(self._safe_get_price(adapter, pair, token_quote, token_base, params_buy))
 
             results_buy = await asyncio.gather(*tasks_buy, return_exceptions=True)
 
@@ -135,7 +143,7 @@ class PriceMonitor:
                 for dex_name, adapter in self.dex_adapters.items():
                     # 復路なので decimals を逆にする
                     params_sell = {"amount_in": max_base_amount_wei, "quote_decimals": base_decimals, "base_decimals": quote_decimals}
-                    tasks_sell.append(asyncio.to_thread(adapter.get_price, pair, token_base, token_quote, params_sell))
+                    tasks_sell.append(self._safe_get_price(adapter, pair, token_base, token_quote, params_sell))
 
                 results_sell = await asyncio.gather(*tasks_sell, return_exceptions=True)
 
@@ -148,34 +156,3 @@ class PriceMonitor:
                  prices[pair] = {"buy": dex_data_buy, "sell": dex_data_sell}
 
         return prices
-
-    async def start_monitoring(self):
-        self.is_running = True
-        self.logger.info("Price monitoring started")
-        #await self.telegram.send_message("🟢 PriceMonitor started")
-
-        while self.is_running:
-            prices = await self.get_prices()
-            if prices:
-                opportunities = self.detector.detect_opportunities(prices)
-                if opportunities:
-                    self.logger.warning(f"検知された機会: {len(opportunities)}件")
-
-                    for opp in opportunities:
-                        # 💡 修正：非同期関数の中で安全に「辞書データ」から各要素を掘り出して処理する
-                        async def process_opportunity_async(opportunity_data):
-                            try:
-                                # 1. 収益性の計算
-                                calc = self.profitability.calculate_profitability(opportunity_data)
-
-                                # 2. 利益が出るなら実行エンジンを叩く
-                                if calc and calc.get("is_profitable"):
-                                    # 🚀 ここでExecutorの非同期処理を完璧に呼び出します！
-                                    await self.executor.execute(calc)
-                            except Exception as e:
-                                self.logger.error(f"❌ 機会処理中にエラーが発生: {e}")
-
-                        # メインループを邪魔させずにタスクを即時射出
-                        asyncio.create_task(process_opportunity_async(opp))
-
-            await asyncio.sleep(self.monitoring_interval)
